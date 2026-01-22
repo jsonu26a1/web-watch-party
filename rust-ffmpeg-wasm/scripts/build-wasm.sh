@@ -12,9 +12,14 @@ CONF_FLAGS=(
     # ASYNCIFY_IMPORTS and EXPORTED_FUNCTIONS might need modifying
 #     -sASYNCIFY_IMPORTS="test_promise_js"
 #     -sEXPORTED_FUNCTIONS="_test_promise,_foo_add,_get_av_version,_try_av_malloc,_try_box_leak"
-    -sEXPORTED_FUNCTIONS="_get_av_version"
+    -sASYNCIFY_IMPORTS="read_current_file"
+    -sEXPORTED_FUNCTIONS="_get_av_version,_log_av_version,_probe_demo"
 
     -sEXPORTED_RUNTIME_METHODS="ccall,wasmMemory,UTF8ToString"
+
+    # hmm, I guess we need these
+    ./deps/install/lib/libvpx.a
+    ./deps/install/lib/libopus.a
 
     # is it smart to use a glob pattern? there should only be the one static library file...
     ./target/wasm32-unknown-emscripten/$CRATE_PROFILE/*.a
@@ -23,4 +28,4 @@ CONF_FLAGS=(
 
 emcc "${CONF_FLAGS[@]}"
 
-cp -ur ./src/www ./target/www
+cp -ur -t ./target/www ./src/www/*
