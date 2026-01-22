@@ -2,8 +2,8 @@ set -e
 
 cargo build --target wasm32-unknown-emscripten
 
-CRATE_PROFILE="debug"
-OPTIMIZATION_FLAGS=(
+export CRATE_PROFILE="debug"
+export OPTIMIZATION_FLAGS=(
     # do a minimal amount of opimization
     # https://emscripten.org/docs/tools_reference/emcc.html#arguments
     #   [compile+link] Simple optimizations. During the compile step these include LLVM -O1 optimizations.

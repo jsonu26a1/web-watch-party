@@ -24,11 +24,9 @@ mv ./.cargo/config.toml ./.cargo/config.toml-disabled
 
 FFMPEG_LIBS_DIR=$INSTALL_DIR/lib \
 FFMPEG_INCLUDE_DIR=$BUILD_DIR/ffmpeg/src \
-  cargo build
+  cargo check
 
 # this is stupid, I hate cargo
 mv ./.cargo/config.toml-disabled ./.cargo/config.toml
 
-
 cp ./target/debug/build/rusty_ffmpeg-*/out/binding.rs ./deps/binding.rs
-
