@@ -1,0 +1,12 @@
+[build]
+target = "wasm32-unknown-emscripten"
+
+[env]
+FFMPEG_LIBS_DIR = { value = "./deps/install/lib", relative = true }
+FFMPEG_BINDING_PATH = { value = "./deps/binding.rs", relative = true }
+
+# when generating bindings, we essentially use
+# FFMPEG_INCLUDE_DIR = { value = "./deps/build/ffmpeg/src", relative = true }
+
+# but this may also work? who cares.
+# FFMPEG_INCLUDE_DIR = { value = "./deps/install/include", relative = true }

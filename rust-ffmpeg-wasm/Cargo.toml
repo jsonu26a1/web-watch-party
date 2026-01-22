@@ -1,0 +1,11 @@
+[package]
+name = "rust-ffmpeg-wasm"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+# rusty_ffmpeg = { version = "0.16", features = ["use_prebuilt_binding"] }
+rusty_ffmpeg = { version = "0.16", features = [] }
