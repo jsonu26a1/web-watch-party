@@ -57,6 +57,8 @@ OPTS=(
   --ar=emar
   --ranlib=emranlib
   --cc=emcc
+  # idk what this really does, but we don't need to depend on gcc
+  --host-cc=emcc
   --cxx=em++
   --objcc=emcc
   --dep-cc=emcc

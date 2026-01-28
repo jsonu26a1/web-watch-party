@@ -12,4 +12,6 @@ FLAGS=(
 )
 export OPTIMIZATION_FLAGS="${FLAGS[@]}"
 
-./scripts/build-wasm.sh
+make -f ./scripts/wasm-makefile
+
+cp -ur -t ./target ./src/www

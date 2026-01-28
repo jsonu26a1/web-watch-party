@@ -26,6 +26,6 @@ CONF_FLAGS=(
     -o target/www/output.js
 )
 
-emcc "${CONF_FLAGS[@]}"
+mkdir -p ./target/www
 
-cp -ur -t ./target/www ./src/www/*
+emcc "${CONF_FLAGS[@]}"
