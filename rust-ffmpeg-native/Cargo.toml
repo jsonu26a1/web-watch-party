@@ -1,0 +1,8 @@
+[package]
+name = "rust-ffmpeg-native"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# rusty_ffmpeg = { version = "0.16", features = ["use_prebuilt_binding"] }
+rusty_ffmpeg = { version = "0.16", features = ["link_system_ffmpeg"] }
