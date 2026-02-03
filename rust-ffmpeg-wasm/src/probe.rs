@@ -3,6 +3,7 @@ use rusty_ffmpeg::ffi;
 use std::os::raw::{ c_int, c_void };
 use std::ptr::{ null, null_mut };
 use std::slice;
+use std::io::SeekFrom;
 
 use crate::platform::{ OpenFileHandle };
 
@@ -20,6 +21,28 @@ extern "C" fn read_packet(opaque: *mut c_void, buf_ptr: *mut u8, buf_size: c_int
         return ffi::AVERROR_EOF;
     }
     count_read
+}
+
+// from libc crate
+const SEEK_SET: c_int = 0;
+const SEEK_CUR: c_int = 1;
+const SEEK_END: c_int = 2;
+
+extern "C" fn seek_callback(opaque: *mut c_void, offset: i64, whence: c_int) -> i64 {
+    let handle = unsafe { (opaque as *mut OpenFileHandle).as_mut().unwrap() };
+    if whence & ffi::AVSEEK_SIZE as i32 > 0 {
+        // println!("")
+        return handle.size() as i64;
+    }
+    let seek_offset = if whence & SEEK_CUR > 0 {
+        SeekFrom::Current(offset)
+    } else if whence & SEEK_END > 2 {
+        SeekFrom::End(offset)
+    } else {
+        // default is SEEK_SET
+        SeekFrom::Start(offset as u64)
+    };
+    handle.seek(seek_offset)
 }
 
 const BUFFER_SIZE: i32 = 1024 * 4;
@@ -51,7 +74,7 @@ fn probe_dump_format() {
         handle as *mut c_void,
         Some(read_packet),
         None,
-        None // seek fn, TODO?
+        Some(seek_callback)
     ) };
     ifmt_ctx.pb = avio_ctx;
     // ifmt_ctx_ptr will be freed and set to null on error;

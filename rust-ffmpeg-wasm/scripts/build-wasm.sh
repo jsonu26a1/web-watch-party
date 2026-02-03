@@ -9,6 +9,8 @@ CONF_FLAGS=(
     ${OPTIMIZATION_FLAGS[@]}
     --js-library "./src/em-library.js"
     -sASYNCIFY
+    # we got error "unreachable"; docs advised increasing this; I chose 4096 * 16 (up from default 4096)
+    -sASYNCIFY_STACK_SIZE=65536
     # ASYNCIFY_IMPORTS and EXPORTED_FUNCTIONS might need modifying
 #     -sASYNCIFY_IMPORTS="test_promise_js"
 #     -sEXPORTED_FUNCTIONS="_test_promise,_foo_add,_get_av_version,_try_av_malloc,_try_box_leak"

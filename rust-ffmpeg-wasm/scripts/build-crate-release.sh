@@ -7,6 +7,8 @@ FLAGS=(
     # https://emscripten.org/docs/tools_reference/emcc.html#arguments
     #   [compile+link] Like -Os, but reduces code size even further, and may take longer to run. This can affect both Wasm and JavaScript.
     -Oz
+    # Link Time Optimization; didn't appear to reduce final artifact size...
+    -flto
 )
 export OPTIMIZATION_FLAGS="${FLAGS[@]}"
 
