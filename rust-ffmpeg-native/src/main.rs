@@ -3,6 +3,8 @@ use std::ffi::CStr;
 
 #[path = "../../rust-ffmpeg-wasm/src/probe.rs"]
 mod probe;
+#[path = "../../rust-ffmpeg-wasm/src/context.rs"]
+mod context;
 mod platform;
 
 fn main() {

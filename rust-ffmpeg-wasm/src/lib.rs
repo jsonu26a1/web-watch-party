@@ -3,6 +3,7 @@ use std::ffi::CStr;
 
 mod probe;
 mod platform;
+mod context;
 
 unsafe extern "C" {
     fn console_log_raw(ptr: *const u8, len: usize);
