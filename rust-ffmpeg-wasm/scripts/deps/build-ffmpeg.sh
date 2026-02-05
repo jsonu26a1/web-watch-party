@@ -21,6 +21,19 @@ OPTS=(
   # --disable-avdevice
   --disable-network
 
+  # TODO: showing all available encoders and decoders lists both `libopus` and `opus`; I just
+  # realized this current config isn't even using the libopus encoder, but the built-in one.
+  # https://ffmpeg.org/ffmpeg-codecs.html#opus
+  # link with info about built-in opus encoder.
+  # similarly, there is a built-in vp9 decoder. but we do need libvpx for vp9 encoding.
+
+  # right now during development, disable most decoders.
+  --disable-decoders
+  --enable-decoder=h264
+  --enable-decoder=aac
+  --enable-decoder=vp9
+  --enable-decoder=opus
+
   --disable-encoders
   --enable-encoder=libvpx_vp9
   --enable-encoder=opus

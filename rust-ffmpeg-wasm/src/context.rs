@@ -56,6 +56,7 @@ impl Drop for IoContext {
 }
 
 extern "C" fn read_callback(opaque: *mut c_void, buf_ptr: *mut u8, buf_size: c_int) -> c_int {
+    // println!("**** read_callback: {buf_ptr:p}, {buf_size}");
     let handle = unsafe { opaque.cast::<OpenFileHandle>().as_mut().unwrap() };
     let count_read = handle.read(buf_ptr, buf_size);
     if count_read == 0 {
@@ -82,6 +83,7 @@ extern "C" fn seek_callback(opaque: *mut c_void, offset: i64, whence: c_int) -> 
         // default is SEEK_SET
         SeekFrom::Start(offset as u64)
     };
+    // println!("**** seek_callback: {seek_offset:?}");
     handle.seek(seek_offset)
 }
 

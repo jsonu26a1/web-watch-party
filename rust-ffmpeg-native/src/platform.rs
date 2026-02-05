@@ -11,7 +11,13 @@ pub struct OpenFileHandle {
 
 impl OpenFileHandle {
     pub fn new() -> Self {
-        let file_name = "frag_bunny.mp4";
+        let file_name = {
+            // I can't use `include_str!` because I'm in a vm and ./src is a symlink to my host machine lol
+            // it's bad but it's ok this is just for testing
+            let mut s = String::new();
+            File::open("../rust-ffmpeg-wasm/deps/sample-media-path.txt").unwrap().read_to_string(&mut s).unwrap();
+            s.trim().to_string()
+        };
         let file = File::open(file_name).unwrap();
         let size = file.metadata().unwrap().len();
 

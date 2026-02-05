@@ -1,2 +1,2 @@
-./target/www/output.js: ./src/em-library.js ./target/wasm32-unknown-emscripten/$(CRATE_PROFILE)/*.a
+./target/www/output.mjs: ./src/em-library.js ./target/wasm32-unknown-emscripten/$(CRATE_PROFILE)/*.a ./scripts/build-wasm.sh
 	./scripts/build-wasm.sh
