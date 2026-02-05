@@ -56,9 +56,9 @@ impl Drop for IoContext {
 }
 
 extern "C" fn read_callback(opaque: *mut c_void, buf_ptr: *mut u8, buf_size: c_int) -> c_int {
-    // println!("**** read_callback: {buf_ptr:p}, {buf_size}");
     let handle = unsafe { opaque.cast::<OpenFileHandle>().as_mut().unwrap() };
     let count_read = handle.read(buf_ptr, buf_size);
+    // println!("**** read_callback: buf_ptr:{buf_ptr:p}, buf_size:{buf_size}, count_read:{count_read}");
     if count_read == 0 {
         return ffi::AVERROR_EOF;
     }
@@ -73,7 +73,9 @@ const SEEK_END: c_int = 2;
 extern "C" fn seek_callback(opaque: *mut c_void, offset: i64, whence: c_int) -> i64 {
     let handle = unsafe { opaque.cast::<OpenFileHandle>().as_mut().unwrap() };
     if whence & ffi::AVSEEK_SIZE as i32 > 0 {
-        return handle.size() as i64;
+        let size = handle.size() as i64;
+        // println!("**** seek_callback: AVSEEK_SIZE({size})");
+        return size;
     }
     let seek_offset = if whence & SEEK_CUR > 0 {
         SeekFrom::Current(offset)
