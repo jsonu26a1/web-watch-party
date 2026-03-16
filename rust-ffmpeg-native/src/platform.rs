@@ -1,23 +1,26 @@
-use std::os::raw::{ c_int };
-
-use std::fs::File;
-use std::io::{ BufReader, Read, Error, ErrorKind, Seek, SeekFrom };
+use std::fs::{ File, OpenOptions };
+use std::io::{ BufReader, BufWriter, Read, Write, Error, ErrorKind, Seek, SeekFrom };
+use std::path::{ Path, PathBuf };
 use std::slice;
 
-pub struct OpenFileHandle {
+use std::sync::LazyLock;
+
+use crate::context::{ IoReadHandler, IoWriteHandler };
+
+static SAMPLE_MEDIA_PATH: LazyLock<String> = LazyLock::new(|| {
+    let mut s = String::new();
+    File::open("../rust-ffmpeg-wasm/deps/sample-media-path.txt").unwrap().read_to_string(&mut s).unwrap();
+    s.trim().to_string()
+});
+
+pub struct ReadHandle {
     file: BufReader<File>,
     size: u64,
 }
 
-impl OpenFileHandle {
+impl ReadHandle {
     pub fn new() -> Self {
-        let file_name = {
-            // I can't use `include_str!` because I'm in a vm and ./src is a symlink to my host machine lol
-            // it's bad but it's ok this is just for testing
-            let mut s = String::new();
-            File::open("../rust-ffmpeg-wasm/deps/sample-media-path.txt").unwrap().read_to_string(&mut s).unwrap();
-            s.trim().to_string()
-        };
+        let file_name = &*SAMPLE_MEDIA_PATH;
         let file = File::open(file_name).unwrap();
         let size = file.metadata().unwrap().len();
 
@@ -26,13 +29,15 @@ impl OpenFileHandle {
             size,
         }
     }
+}
 
-    pub fn read(&mut self, buf_ptr: *mut u8, buf_size: c_int) -> c_int {
+impl IoReadHandler for ReadHandle {
+    fn read(&mut self, buf_ptr: *mut u8, buf_size: i32) -> i32 {
         let buf = unsafe { slice::from_raw_parts_mut(buf_ptr, buf_size as usize) };
-        self.file.read(buf).unwrap() as c_int
+        self.file.read(buf).unwrap() as i32
     }
 
-    pub fn seek(&mut self, offset: SeekFrom) -> i64 {
+    fn seek(&mut self, offset: SeekFrom) -> i64 {
         // TODO we could track the cursor position and use BufReader::seek_relative
         // since seek otherwise drops the internal buffer
         // match offset {
@@ -42,7 +47,49 @@ impl OpenFileHandle {
         self.file.seek(offset).unwrap() as i64
     }
 
-    pub fn size(&self) -> u64 {
+    fn size(&self) -> u64 {
         self.size
+    }
+}
+
+pub struct WriteHandle {
+    file: BufWriter<File>,
+}
+
+fn output_file_name(kind: &str) -> PathBuf {
+    let base = Path::new(&*SAMPLE_MEDIA_PATH);
+    let file_name = format!( "{}_{kind}.{}",
+        base.file_stem().unwrap().display(),
+        base.extension().unwrap().display() );
+    base.parent().unwrap().join(file_name)
+}
+
+impl WriteHandle {
+    pub fn for_audio() -> Self {
+        Self::new(output_file_name("audio"))
+    }
+
+    pub fn for_video() -> Self {
+        Self::new(output_file_name("video"))
+    }
+
+    pub fn new(path: impl AsRef<Path>) -> Self {
+        let file = OpenOptions::new().create(true).write(true).truncate(true).open(path).unwrap();
+        Self {
+            file: BufWriter::new(file),
+        }
+    }
+}
+
+impl IoWriteHandler for WriteHandle {
+    fn write(&mut self, buf_ptr: *const u8, buf_size: i32) -> i32 {
+        let buf = unsafe { slice::from_raw_parts(buf_ptr, buf_size as usize) };
+        match self.file.write_all(buf) {
+            Ok(_) => 0,
+            Err(e) => {
+                // TODO store `e` somewhere to access later? or print to console?
+                rusty_ffmpeg::ffi::AVERROR_EXTERNAL
+            },
+        }
     }
 }

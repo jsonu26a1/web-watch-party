@@ -2,43 +2,29 @@ use rusty_ffmpeg::ffi;
 
 use std::os::raw::{ c_int, c_void };
 use std::io::SeekFrom;
-
-use crate::platform::{ OpenFileHandle };
+use std::ptr::{ null, null_mut };
+use crate::platform::{ ReadHandle, WriteHandle };
 
 const BUFFER_SIZE: i32 = 1024 * 4 * 16;
 
-/*
-    still under construction;
-    I started with a simple trait `_OpenFileHandle`, but is kind of ugly to impl and would mean we would
-    always be passing `extern "C" fn` read, write, and seek callbacks to `avio_alloc_context`.
+// from libc
+// const SEEK_SET: c_int = 0;
+const SEEK_CUR: c_int = 1;
+const SEEK_END: c_int = 2;
 
-    then I came up with the design for `FileHandle`, and managed to make the `extern "C"` callbacks as part
-    of the trait implementation, which means we don't have to deal with trait objects. I also added specialized
-    traits `ReadHandle` and `WriteHandle`, and `IoContext` is able to accept either and pass the correct C
-    callback functions to `avio_alloc_context`.
+/*
+    is this over complicated? probably. I only wanted a single IoContext type that wraps AVIOContext,
+    and properly constructing and dropping it. for it to accept either IoReadHandler or IoWriteHandler,
+    I had to make IoHandler, ReadWrapper and WriteWrapper. the types are a bit ugly, but it's mostly
+    encapsulated by InputFormatContext and OutputFormatContext, so it's not too terrible to use.
 */
 
-pub trait _OpenFileHandle {
+unsafe trait IoHandler: Sized {
+    const READONLY: bool; // true: only read+seek+size, false: only write
     fn read(&mut self, buf_ptr: *mut u8, buf_size: i32) -> i32;
     fn write(&mut self, buf_ptr: *const u8, buf_size: i32) -> i32;
     fn seek(&mut self, offset: SeekFrom) -> i64;
     fn size(&self) -> u64;
-}
-
-pub trait FileHandle: Sized {
-    const READONLY: bool; // true: only read+seek, false: only write
-    fn read(&mut self, buf_ptr: *mut u8, buf_size: i32) -> i32 {
-        unimplemented!();
-    }
-    fn write(&mut self, buf_ptr: *const u8, buf_size: i32) -> i32 {
-        unimplemented!();
-    }
-    fn seek(&mut self, offset: SeekFrom) -> i64 {
-        unimplemented!();
-    }
-    fn size(&self) -> u64 {
-        unimplemented!();
-    }
 
     unsafe extern "C" fn read_callback(opaque: *mut c_void, buf_ptr: *mut u8, buf_size: i32) -> i32 {
         let handle = unsafe { opaque.cast::<Self>().as_mut().unwrap() };
@@ -49,6 +35,10 @@ pub trait FileHandle: Sized {
         }
         count_read
     }
+    // TODO this corresponds to avio->write_packet, see https://ffmpeg.org/doxygen/7.1/aviobuf_8c_source.html#l00131
+    // if ret < 0, avio->error = ret; otherwise, the ret value is discarded.
+    // what errors should we be passing along here?
+    // maybe return AVERROR_EXTERNAL, and we store the original IOError for later.
     unsafe extern "C" fn write_callback(opaque: *mut c_void, buf_ptr: *const u8, buf_size: i32) -> i32 {
         let handle = unsafe { opaque.cast::<Self>().as_mut().unwrap() };
         let ret = handle.write(buf_ptr, buf_size);
@@ -64,7 +54,7 @@ pub trait FileHandle: Sized {
         }
         let seek_offset = if whence & SEEK_CUR > 0 {
             SeekFrom::Current(offset)
-        } else if whence & SEEK_END > 2 {
+        } else if whence & SEEK_END > 0 {
             SeekFrom::End(offset)
         } else {
             // default is SEEK_SET
@@ -73,233 +63,193 @@ pub trait FileHandle: Sized {
         // println!("**** seek_callback: {seek_offset:?}");
         handle.seek(seek_offset)
     }
-    unsafe fn drop_box_from_raw(p: *mut c_void) {
-        drop(unsafe { Box::from_raw(p.cast::<Self>()) });
-    }
 }
 
-pub trait ReadHandle: Sized {
+pub trait IoReadHandler: Sized {
     fn read(&mut self, buf_ptr: *mut u8, buf_size: i32) -> i32;
     fn seek(&mut self, offset: SeekFrom) -> i64;
     fn size(&self) -> u64;
 }
 
-struct FileHandleReadWrapper<T>(T);
+struct ReadWrapper<T>(T);
 
-impl<T: ReadHandle> From<T> for FileHandleReadWrapper<T> {
-    fn from(value: T) -> Self {
-        Self(value)
-    }
-}
-
-impl<T: ReadHandle> FileHandle for FileHandleReadWrapper<T> {
+unsafe impl<T: IoReadHandler> IoHandler for ReadWrapper<T> {
     const READONLY: bool = true;
     fn read(&mut self, buf_ptr: *mut u8, buf_size: i32) -> i32 {
-        <T as ReadHandle>::read(&mut self.0, buf_ptr, buf_size)
+        <T as IoReadHandler>::read(&mut self.0, buf_ptr, buf_size)
+    }
+    fn write(&mut self, buf_ptr: *const u8, buf_size: i32) -> i32 {
+        unimplemented!();
     }
     fn seek(&mut self, offset: SeekFrom) -> i64 {
-        <T as ReadHandle>::seek(&mut self.0, offset)
+        <T as IoReadHandler>::seek(&mut self.0, offset)
     }
     fn size(&self) -> u64 {
-        <T as ReadHandle>::size(&self.0)
+        <T as IoReadHandler>::size(&self.0)
     }
 }
 
-pub trait WriteHandle: Sized {
+pub trait IoWriteHandler: Sized {
     fn write(&mut self, buf_ptr: *const u8, buf_size: i32) -> i32;
 }
 
-struct FileHandleWriteWrapper<T>(T);
+struct WriteWrapper<T>(T);
 
-impl<T: WriteHandle> From<T> for FileHandleWriteWrapper<T> {
-    fn from(value: T) -> Self {
-        Self(value)
-    }
-}
-
-impl<T: WriteHandle> FileHandle for FileHandleWriteWrapper<T> {
+unsafe impl<T: IoWriteHandler> IoHandler for WriteWrapper<T> {
     const READONLY: bool = false;
+    fn read(&mut self, buf_ptr: *mut u8, buf_size: i32) -> i32 {
+        unimplemented!();
+    }
     fn write(&mut self, buf_ptr: *const u8, buf_size: i32) -> i32 {
-        <T as WriteHandle>::write(&mut self.0, buf_ptr, buf_size)
+        <T as IoWriteHandler>::write(&mut self.0, buf_ptr, buf_size)
+    }
+    fn seek(&mut self, offset: SeekFrom) -> i64 {
+        unimplemented!();
+    }
+    fn size(&self) -> u64 {
+        unimplemented!();
     }
 }
 
-pub struct IoContext2 {
-    pub avio_ctx: *mut ffi::AVIOContext,
-    drop_handle: unsafe fn(*mut c_void),
+struct IoContext<T> {
+    avio_ctx: *mut ffi::AVIOContext,
+    handler: *mut T,
 }
 
-impl IoContext2 {
-    pub fn new<T: Into<H>, H: FileHandle>(handle: T) -> Option<Self> {
-        let handle = handle.into();
+impl<T: IoReadHandler> IoContext<ReadWrapper<T>> {
+    fn from_reader(handle: T) -> Option<Self> {
+        Self::new(ReadWrapper(handle))
+    }
+}
+
+impl<T: IoWriteHandler> IoContext<WriteWrapper<T>> {
+    fn from_writer(handle: T) -> Option<Self> {
+        Self::new(WriteWrapper(handle))
+    }
+}
+
+impl<T: IoHandler> IoContext<T> {
+    fn new(handle: T) -> Option<Self> {
         let avio_ctx_buffer = unsafe { ffi::av_malloc(BUFFER_SIZE as usize) };
         if avio_ctx_buffer.is_null() {
             return None;
         }
-        let (read_cb, write_cb, seek_cb) = if H::READONLY {
-            (Some(H::read_callback as _), None, Some(H::seek_callback as _))
+        let (read_cb, write_cb, seek_cb) = if T::READONLY {
+            (Some(T::read_callback as _), None, Some(T::seek_callback as _))
         } else {
-            (None, Some(H::write_callback as _), None)
+            (None, Some(T::write_callback as _), None)
         };
-        let opaque = Box::into_raw(Box::new(handle)).cast();
+        let handler = Box::into_raw(Box::new(handle));
         let avio_ctx = unsafe { ffi::avio_alloc_context(
             avio_ctx_buffer.cast(),
             BUFFER_SIZE,
             0, // not writable
-            opaque,
+            handler.cast(),
             read_cb,
             write_cb,
             seek_cb,
         ) };
         if avio_ctx.is_null() {
-            // drop the opaque box we created
-            unsafe { H::drop_box_from_raw(opaque) };
+            // drop the handler box we created
+            unsafe { drop(Box::from_raw(handler)) };
             // free avio_ctx_buffer if avio_alloc_context fails. not a common edge case,
             // but the avio_read_callback example does this and I like "correctness"
             unsafe { ffi::av_free(avio_ctx_buffer) };
             None
         } else {
-            Some(IoContext2 {
+            Some(IoContext {
                 avio_ctx,
-                drop_handle: H::drop_box_from_raw
+                handler
             })
         }
     }
-
-    pub fn as_ptr(&self) -> *mut ffi::AVIOContext {
-        self.avio_ctx
-    }
-
-    pub fn as_mut(&mut self) -> &mut *mut ffi::AVIOContext {
-        &mut self.avio_ctx
-    }
 }
 
-impl Drop for IoContext2 {
+impl<T> Drop for IoContext<T> {
     fn drop(&mut self) {
-        unsafe { (self.drop_handle)(self.avio_ctx.as_mut().unwrap().opaque) };
+        unsafe { drop(Box::from_raw(self.handler)) };
         unsafe { ffi::av_free(self.avio_ctx.as_mut().unwrap().buffer.cast()) };
-        unsafe { ffi::avio_context_free(self.as_mut()) };
+        unsafe { ffi::avio_context_free(&mut self.avio_ctx) };
     }
 }
 
-pub struct IoContext {
-    pub avio_ctx: *mut ffi::AVIOContext,
+struct FormatContext<T> {
+    fmt_ctx: *mut ffi::AVFormatContext,
+    io_ctx: IoContext<T>,
 }
 
-impl IoContext {
-    pub fn new(handle: OpenFileHandle) -> Option<Self> {
-        let avio_ctx_buffer = unsafe { ffi::av_malloc(BUFFER_SIZE as usize) };
-        if avio_ctx_buffer.is_null() {
-            return None;
-        }
-        let avio_ctx = unsafe { ffi::avio_alloc_context(
-            avio_ctx_buffer.cast(),
-            BUFFER_SIZE,
-            0, // not writable
-            Box::into_raw(Box::new(handle)).cast(),
-            Some(read_callback),
-            None,
-            Some(seek_callback),
-        ) };
-        if avio_ctx.is_null() {
-            // free avio_ctx_buffer if avio_alloc_context fails. not a common edge case,
-            // but the avio_read_callback example does this and I like "correctness"
-            unsafe { ffi::av_free(avio_ctx_buffer) };
-            None
-        } else {
-            Some(IoContext { avio_ctx })
-        }
-    }
-
-    pub fn as_ptr(&self) -> *mut ffi::AVIOContext {
-        self.avio_ctx
-    }
-
-    pub fn as_mut(&mut self) -> &mut *mut ffi::AVIOContext {
-        &mut self.avio_ctx
-    }
-}
-
-impl Drop for IoContext {
-    fn drop(&mut self) {
-        unsafe {
-            drop(Box::from_raw(self.avio_ctx.as_mut().unwrap().opaque));
-            ffi::av_free(self.avio_ctx.as_mut().unwrap().buffer.cast());
-            ffi::avio_context_free(self.as_mut());
-        }
-    }
-}
-
-extern "C" fn read_callback(opaque: *mut c_void, buf_ptr: *mut u8, buf_size: c_int) -> c_int {
-    let handle = unsafe { opaque.cast::<OpenFileHandle>().as_mut().unwrap() };
-    let count_read = handle.read(buf_ptr, buf_size);
-    // println!("**** read_callback: buf_ptr:{buf_ptr:p}, buf_size:{buf_size}, count_read:{count_read}");
-    if count_read == 0 {
-        return ffi::AVERROR_EOF;
-    }
-    count_read
-}
-
-// from libc
-// const SEEK_SET: c_int = 0;
-const SEEK_CUR: c_int = 1;
-const SEEK_END: c_int = 2;
-
-extern "C" fn seek_callback(opaque: *mut c_void, offset: i64, whence: c_int) -> i64 {
-    let handle = unsafe { opaque.cast::<OpenFileHandle>().as_mut().unwrap() };
-    if whence & ffi::AVSEEK_SIZE as i32 > 0 {
-        let size = handle.size() as i64;
-        // println!("**** seek_callback: AVSEEK_SIZE({size})");
-        return size;
-    }
-    let seek_offset = if whence & SEEK_CUR > 0 {
-        SeekFrom::Current(offset)
-    } else if whence & SEEK_END > 2 {
-        SeekFrom::End(offset)
-    } else {
-        // default is SEEK_SET
-        SeekFrom::Start(offset as u64)
-    };
-    // println!("**** seek_callback: {seek_offset:?}");
-    handle.seek(seek_offset)
-}
-
-/*
-    I originally was using NonNull<ffi::AVFormatContext>, but avformat_open_input takes a `*mut *mut ffi::AVFormatContext`,
-    and will free and set it to NULL on failure; avformat_close_input is safe to call with NULL
-*/
-
-pub struct FormatContext {
-    pub ifmt_ctx: *mut ffi::AVFormatContext,
-    pub io_ctx: IoContext,
-}
-
-impl FormatContext {
-    pub fn new(io_ctx: IoContext) -> Option<Self> {
-        let mut ifmt_ctx = unsafe { ffi::avformat_alloc_context() };
-        unsafe { ifmt_ctx.as_mut()?.pb = io_ctx.avio_ctx };
+impl<T: IoHandler> FormatContext<T> {
+    fn new(io_ctx: IoContext<T>) -> Option<Self> {
+        let mut fmt_ctx = unsafe { ffi::avformat_alloc_context() };
+        unsafe { fmt_ctx.as_mut()?.pb = io_ctx.avio_ctx };
         Some(Self {
-            ifmt_ctx,
+            fmt_ctx,
             io_ctx
         })
     }
+}
 
-    pub fn with_handle(handle: OpenFileHandle) -> Option<Self> {
-        Self::new(IoContext::new(handle)?)
-    }
-
-    pub fn as_ptr(&self) -> *mut ffi::AVFormatContext {
-        self.ifmt_ctx
-    }
-
-    pub fn as_mut(&mut self) -> &mut *mut ffi::AVFormatContext {
-        &mut self.ifmt_ctx
+impl<T> Drop for FormatContext<T> {
+    fn drop(&mut self) {
+        // whoops, I had this wrong
+        // unsafe { ffi::avformat_close_input(&mut self.fmt_ctx) };
+        unsafe { ffi::avformat_free_context(self.fmt_ctx) };
+        
     }
 }
 
-impl Drop for FormatContext {
+pub struct InputFormatContext<T = ReadHandle>(FormatContext<ReadWrapper<T>>);
+
+impl<T: IoReadHandler> InputFormatContext<T> {
+    pub fn new(handle: T) -> Option<Self> {
+        let io_ctx = IoContext::from_reader(handle)?;
+        let mut fmt_ctx = FormatContext::new(io_ctx)?;
+        // we call avformat_open_input right after setting fmt_ctx.pb to io_ctx because it sets an
+        // internal AVFMT_FLAG_CUSTOM_IO flag which is expected by avformat_close_input (called on Drop)
+        let ret = unsafe { ffi::avformat_open_input(&mut fmt_ctx.fmt_ctx, null(), null(), null_mut()) };
+        // NOTE: avformat_open_input sets fmt_ctx to null on failure
+        if ret != 0 {
+            // TODO instead of None, consider returning type Result<Self, AVError>, `Err(ret)`
+            return None;
+        }
+        Some(Self(fmt_ctx))
+    }
+
+    pub fn as_ptr(&self) -> *mut ffi::AVFormatContext {
+        self.0.fmt_ctx
+    }
+
+    pub fn as_mut(&mut self) -> &mut *mut ffi::AVFormatContext {
+        &mut self.0.fmt_ctx
+    }
+}
+
+impl<T> Drop for InputFormatContext<T> {
     fn drop(&mut self) {
-        unsafe { ffi::avformat_close_input(self.as_mut()) };
+        // TODO: WARNING: what if this is called before avformat_open_input?
+        // in avio_read_callback.c, AVFormatContext.pb is only set right before avformat_open_input
+        // is called. if InputFormatContext is dropped before avformat_open_input, then the flag
+        // `AVFormatContext.flags |= AVFMT_FLAG_CUSTOM_IO` won't be set...
+        // I think we should have InputFormatContext::new call avformat_open_input.
+
+        unsafe { ffi::avformat_close_input(&mut self.0.fmt_ctx) }; 
+    }
+}
+
+pub struct OutputFormatContext<T = WriteHandle>(FormatContext<WriteWrapper<T>>);
+
+impl<T: IoWriteHandler> OutputFormatContext<T> {
+    pub fn new(handle: T) -> Option<Self> {
+        let io_ctx = IoContext::from_writer(handle)?;
+        let fmt_ctx = FormatContext::new(io_ctx)?;
+        Some(Self(fmt_ctx))
+    }
+
+    pub fn as_ptr(&self) -> *mut ffi::AVFormatContext {
+        self.0.fmt_ctx
+    }
+
+    pub fn as_mut(&mut self) -> &mut *mut ffi::AVFormatContext {
+        &mut self.0.fmt_ctx
     }
 }
