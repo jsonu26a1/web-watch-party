@@ -41,6 +41,7 @@ unsafe trait IoHandler: Sized {
     // maybe return AVERROR_EXTERNAL, and we store the original IOError for later.
     unsafe extern "C" fn write_callback(opaque: *mut c_void, buf_ptr: *const u8, buf_size: i32) -> i32 {
         let handle = unsafe { opaque.cast::<Self>().as_mut().unwrap() };
+        // println!("**** write_callback: buf_ptr:{buf_ptr:p}, buf_size:{buf_size}");
         let ret = handle.write(buf_ptr, buf_size);
         // println!("**** write_callback: buf_ptr:{buf_ptr:p}, buf_size:{buf_size}, ret:{ret}");
         ret
@@ -76,21 +77,22 @@ struct ReadWrapper<T>(T);
 unsafe impl<T: IoReadHandler> IoHandler for ReadWrapper<T> {
     const READONLY: bool = true;
     fn read(&mut self, buf_ptr: *mut u8, buf_size: i32) -> i32 {
-        <T as IoReadHandler>::read(&mut self.0, buf_ptr, buf_size)
+        T::read(&mut self.0, buf_ptr, buf_size)
     }
     fn write(&mut self, buf_ptr: *const u8, buf_size: i32) -> i32 {
         unimplemented!();
     }
     fn seek(&mut self, offset: SeekFrom) -> i64 {
-        <T as IoReadHandler>::seek(&mut self.0, offset)
+        T::seek(&mut self.0, offset)
     }
     fn size(&self) -> u64 {
-        <T as IoReadHandler>::size(&self.0)
+        T::size(&self.0)
     }
 }
 
 pub trait IoWriteHandler: Sized {
     fn write(&mut self, buf_ptr: *const u8, buf_size: i32) -> i32;
+    fn seek(&mut self, offset: SeekFrom) -> i64;
 }
 
 struct WriteWrapper<T>(T);
@@ -101,10 +103,10 @@ unsafe impl<T: IoWriteHandler> IoHandler for WriteWrapper<T> {
         unimplemented!();
     }
     fn write(&mut self, buf_ptr: *const u8, buf_size: i32) -> i32 {
-        <T as IoWriteHandler>::write(&mut self.0, buf_ptr, buf_size)
+        T::write(&mut self.0, buf_ptr, buf_size)
     }
     fn seek(&mut self, offset: SeekFrom) -> i64 {
-        unimplemented!();
+        T::seek(&mut self.0, offset)
     }
     fn size(&self) -> u64 {
         unimplemented!();
@@ -134,16 +136,16 @@ impl<T: IoHandler> IoContext<T> {
         if avio_ctx_buffer.is_null() {
             return None;
         }
-        let (read_cb, write_cb, seek_cb) = if T::READONLY {
-            (Some(T::read_callback as _), None, Some(T::seek_callback as _))
+        let (write_flag, read_cb, write_cb, seek_cb) = if T::READONLY {
+            (0, Some(T::read_callback as _), None, Some(T::seek_callback as _))
         } else {
-            (None, Some(T::write_callback as _), None)
+            (1, Some(T::read_callback as _), Some(T::write_callback as _), Some(T::seek_callback as _))
         };
         let handler = Box::into_raw(Box::new(handle));
         let avio_ctx = unsafe { ffi::avio_alloc_context(
             avio_ctx_buffer.cast(),
             BUFFER_SIZE,
-            0, // not writable
+            write_flag,
             handler.cast(),
             read_cb,
             write_cb,

@@ -10,7 +10,7 @@ use crate::context::{ IoReadHandler, IoWriteHandler };
 static SAMPLE_MEDIA_PATH: LazyLock<String> = LazyLock::new(|| {
     let mut s = String::new();
     File::open("../rust-ffmpeg-wasm/deps/sample-media-path.txt").unwrap().read_to_string(&mut s).unwrap();
-    s.trim().to_string()
+    s.lines().nth(0).unwrap().trim().to_string()
 });
 
 pub struct ReadHandle {
@@ -91,5 +91,14 @@ impl IoWriteHandler for WriteHandle {
                 rusty_ffmpeg::ffi::AVERROR_EXTERNAL
             },
         }
+    }
+    fn seek(&mut self, offset: SeekFrom) -> i64 {
+        // TODO we could track the cursor position and use BufReader::seek_relative
+        // since seek otherwise drops the internal buffer
+        // match offset {
+        //     SeekFrom::Current(i) => ...
+        //     _ => ...
+        // }
+        self.file.seek(offset).unwrap() as i64
     }
 }

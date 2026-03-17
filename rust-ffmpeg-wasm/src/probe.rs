@@ -10,7 +10,7 @@ macro_rules! err_abort_return {
     ( $e:expr ) => {
         {
             let ret = unsafe { $e };
-            if ret != 0 {
+            if ret < 0 {
                 println!("****** ERROR call to {}: {ret}, {}", stringify!($e), ffi::av_err2str(ret) );
                 return;
             }
