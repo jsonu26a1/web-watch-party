@@ -1,0 +1,18 @@
+2026-04-13
+==========
+
+so, more roadblocks to getting WebRTC working. just to recap: WebRTC effectively requires a TURN server; most clients will be behind routers, so they need a relay connection to reach other peers. I spent the past few days messing around with async rust (an interesting subject), and getting port mapping working (via NATPMP/PCP and UPnP IGD). today, I tried seeing if I could get the "turn-rs" (turn_server) crate working, and it turns out, no, there's no chance of it working.
+
+I spent some time troubleshooting, because I had to allow the rust app thru the Windows Defender Firewall, before it could accept connections from public IP. next, `about:webrtc` just kept reporting that it was failing. turn_server wasn't logging any errors, just "accept"/"disconnect" events. so I started looking at turn_server's source code, and found something mentioning "the server SHOULD only allocate ports from the range 49152 - 65535" ( at https://github.com/mycrl/turn-rs/blob/v3.4.0/src/turn/mod.rs ). I still don't fully understand the TURN protocol, but I was looking at another page (for setting up coturn, a different server) ( at https://gabrieltanner.org/blog/turn-server/ ), and that mentions you need "A Linux server with a public IP-Address", and the config file shows fields "min-port" and "max-port";
+
+so my (limited, possibly wrong) understanding, is that TURN will create new sockets (with new ports) for each relay that it creates; meaning, we would also need to map those ports on the NAT... this isn't completely a dead end like I initially thought; we might be able to create a turn server, and forward the designated ports on the router as relays are created by the TURN server. but this greatly increases the scope; we would probably need to customize an existing TURN server to get this to all work, which won't be easy (I still don't understand how the TURN/STUN protocols work at all).
+
+theoretically, we could create a "portable TURN server" app that the host would run on their PC; peers wanting to join the host's room would go to a web app (with a public URL, HTTPS, can be statically hosted), which then uses WebRTC and the host's TURN server to connect the peers to the host.
+
+the alternative is the host runs a self-signed HTTPS server that hosts a web app, which relays data via a standard websocket. this has the downside of clients needing to connect to a raw IP address, and navigate any warnings about self-signed TLS certificates; so the UX for peers is much poorer
+
+in either case, port forwarding may fail, the host's PC may have a firewall blocking the server executable, so there's still a lot that can go wrong.
+
+---------
+
+I think it would be cool to create a dedicated "NAT port mapping" service crate, which has the ability to automatically renew port mappings, query currently mapped ports, map ports on multiple gateways, and other features. I mentioned in the previous notes file, I was looking at the source code of syncthing, which has a pretty extensive gateway discovery and port mapping service (itself based on another project, some torrent client), written in Go. it would be a good reference if I wanted to build something like this.

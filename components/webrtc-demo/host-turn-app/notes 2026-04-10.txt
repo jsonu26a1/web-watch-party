@@ -1,0 +1,68 @@
+2026-04-10
+==========
+there's a small chicken-egg problem; crab_nat needs to know the port number our service
+is running on, which it passes on the the NAT device so a mapping can be set up, between
+an external port to local port. turn_server must be configured with both a local port to
+bind to and an external port/ip. ideally, we would want to bind to any available local
+port, give that to crab_nat to setup the mapping, then give the local and external port
+to turn_server. but the constructor for turn_server doesn't allow us to do that.
+
+possible ways to handle this:
+-   1) ignore it. pick a random port; retry if it fails; let user pick a local port;
+    there's a small chance for a collision anyways
+-   2) fork turn_server to let us pass an existing socket in; we would worry about
+    opening a socket and ensuring the port is available (or letting the OS pick a port)
+
+obviously the answer is 1), but my brain keeps thinking about 2). I wonder if there's a
+reason the API doesn't just allow passing in an already created socket?
+`turn_server::startup` is the only entry point that I can tell.
+
+2026-04-11
+==========
+after I finished writing this demo using crap_nat and turn_server, I discovered my router
+(tp-link brand) only supports UPnP/IGDP; so now I'm going to try including the crate `igd`
+the repo https://github.com/sbstp/rust-igd is archived, but I think that should be OK.
+
+what I'm trying to figure out is how to support both NATPMP/PCP and UPnP/IGD; we should
+probably include the `clap` crate to allow users to specify various options, but the default
+will be to try both PCP and IGD, and use which ever one succeeds.
+
+however, which one do we try first? ideally, we would try both simultaneously, and poll each
+then go with the first one that succeeds. how would we do that with async?
+
+2026-04-12
+==========
+we could use futures::select, but it's actually more complicated than that. we have two
+futures; both, either, or none could be Ok(). the first future that completes might be Err
+(although this is unlikely)...
+
+I think we should use a "stream" or similar; we would map the result of each initial future,
+so that the value would be pushed somewhere; then we have a third future that waits for a
+value to be pushed there.
+
+-------
+
+I'm getting confused; how should this be structured? I think we want `clap` to help structure
+the operations. first, we need to determine if we are behind a gateway at all; if we are, we
+need to try natpmp and igd...
+
+---------
+
+I just realized something; TURN uses HTTP to communicate with clients; thus, we will need HTTPS, with TLS private key and certificate; in this scenario, it would need to be self signed. I am unsure if chrome and firefox will be able to connect to a TURN server with a self-signed TLS certificate. I guess the only way to find out is to try it.
+
+-------
+
+so I'm working on the MappedPort::new_auto() fn; which tries both pcp and igd to create a mapped port. initially, I used futures::join!(), but that means we have to wait for the timeout to elapse if one of the protocols isn't supported by the gateway. so now I'm trying to use futures::future::select; which would let us use which ever protocol works first.
+
+however, I want it to intelligently fallback to the other protocol if one fails; so the flow control is quite complicated. there's a couple of options: future::select() and future::select_all(); select() resolves to Either, so we would need to duplicate our error handling for both cases being the first that completes. I tried using select_all(), but had some trouble figuring out how to get that to work...
+
+I can't get select_all to work how I want. my idea was to use closures to ...
+
+you know what, this is all way to fucking complicated. I'm just going to make "auto" try igd first, then pcp second. attempting to try both, and then committing to mapping a port with the first protocol that works is too complicated.
+
+--------
+
+I think the port mapping is all working now; now is just working on the turn server and seeing if it will work with WebRTC.
+
+I was looking at how syncthing handles port mapping, and it's very intriguing; they're setup is much more complicated, with auto-renewal, support for multiple gatways, etc. might be a good reference if we ever want a more complicated port mapping service.
+- https://github.com/syncthing/syncthing/blob/017ef5a57be5f0f51f966a884237ef0808153afc/lib/nat/service.go#L121
