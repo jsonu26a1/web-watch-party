@@ -136,10 +136,10 @@ impl<T: IoHandler> IoContext<T> {
         if avio_ctx_buffer.is_null() {
             return None;
         }
-        let (write_flag, read_cb, write_cb, seek_cb) = if T::READONLY {
-            (0, Some(T::read_callback as _), None, Some(T::seek_callback as _))
+        let (write_flag, read_cb, write_cb) = if T::READONLY {
+            (0, Some(T::read_callback as _), None)
         } else {
-            (1, Some(T::read_callback as _), Some(T::write_callback as _), Some(T::seek_callback as _))
+            (1, None, Some(T::write_callback as _))
         };
         let handler = Box::into_raw(Box::new(handle));
         let avio_ctx = unsafe { ffi::avio_alloc_context(
@@ -149,7 +149,7 @@ impl<T: IoHandler> IoContext<T> {
             handler.cast(),
             read_cb,
             write_cb,
-            seek_cb,
+            Some(T::seek_callback as _),
         ) };
         if avio_ctx.is_null() {
             // drop the handler box we created
@@ -217,10 +217,15 @@ impl<T: IoReadHandler> InputFormatContext<T> {
         Some(Self(fmt_ctx))
     }
 
+    pub fn get_inner(&mut self) -> &mut T {
+        &mut unsafe { self.0.io_ctx.handler.as_mut() }.unwrap().0
+    }
+
     pub fn as_ptr(&self) -> *mut ffi::AVFormatContext {
         self.0.fmt_ctx
     }
 
+    // TODO: do we need this?
     pub fn as_mut(&mut self) -> &mut *mut ffi::AVFormatContext {
         &mut self.0.fmt_ctx
     }
@@ -251,7 +256,122 @@ impl<T: IoWriteHandler> OutputFormatContext<T> {
         self.0.fmt_ctx
     }
 
+    // TODO: do we need this?
     pub fn as_mut(&mut self) -> &mut *mut ffi::AVFormatContext {
         &mut self.0.fmt_ctx
     }
+}
+
+
+use std::rc::Rc;
+use std::cell::RefCell;
+
+pub struct LoggerSettings {
+    pub tag: String,
+    // pub log_fn: Option<fn(msg: String)>,
+    pub read: bool,
+    pub write: bool,
+    pub seek: bool,
+    pub size: bool,
+}
+
+// impl LoggerSettings {
+//     pub fn new(tag: &str)
+// }
+
+pub struct ReadLogger<T> {
+    target: T,
+    pub settings: Rc<RefCell<LoggerSettings>>,
+}
+
+impl<T: IoReadHandler> ReadLogger<T> {
+    pub fn new(target: T, tag: &str, read: bool, seek: bool, size: bool) -> Self {
+        let settings = Rc::new(RefCell::new(LoggerSettings {
+            tag: tag.to_string(),
+            read,
+            write: false,
+            seek,
+            size
+        }));
+        Self {
+            target,
+            settings,
+        }
+    }
+}
+
+impl<T: IoReadHandler> IoReadHandler for ReadLogger<T> {
+    fn read(&mut self, buf_ptr: *mut u8, buf_size: i32) -> i32 {
+        let settings = self.settings.borrow_mut();
+        let ret = self.target.read(buf_ptr, buf_size);
+        if settings.read {
+            println!("[{}] read({buf_ptr:?}, {buf_size}) -> {ret}", settings.tag);
+        }
+        return ret;
+    }
+    fn seek(&mut self, offset: SeekFrom) -> i64 {
+        let settings = self.settings.borrow_mut();
+        let ret = self.target.seek(offset);
+        if settings.seek {
+            println!("[{}] seek({offset:?}) -> {ret}", settings.tag);
+        }
+        return ret;
+    }
+    fn size(&self) -> u64 {
+        let settings = self.settings.borrow_mut();
+        let ret = self.target.size();
+        if settings.size {
+            println!("[{}] size() -> {ret}", settings.tag);
+        }
+        return ret;
+    }
+}
+
+
+pub struct WriteLogger<T> {
+    target: T,
+    pub settings: Rc<RefCell<LoggerSettings>>,
+}
+
+impl<T: IoWriteHandler> WriteLogger<T> {
+    pub fn new(target: T, tag: &str, write: bool, seek: bool) -> Self {
+        let settings = Rc::new(RefCell::new(LoggerSettings {
+            tag: tag.to_string(),
+            read: false,
+            write,
+            seek,
+            size: false,
+        }));
+        Self {
+            target,
+            settings,
+        }
+    }
+}
+
+impl<T: IoWriteHandler> IoWriteHandler for WriteLogger<T> {
+    fn write(&mut self, buf_ptr: *const u8, buf_size: i32) -> i32 {
+        let settings = self.settings.borrow_mut();
+        let ret = self.target.write(buf_ptr, buf_size);
+        if settings.write {
+            println!("[{}] write({buf_ptr:?}, {buf_size}) -> {ret}", settings.tag);
+        }
+        return ret;
+    }
+    fn seek(&mut self, offset: SeekFrom) -> i64 {
+        let settings = self.settings.borrow_mut();
+        let ret = self.target.seek(offset);
+        if settings.seek {
+            println!("[{}] seek({offset:?}) -> {ret}", settings.tag);
+        }
+        return ret;
+    }
+    // fn size(&self) -> u64 {
+    //     let settings = self.settings.borrow_mut();
+    //     let ret = self.target.size();
+    //     if settings.size {
+    //         println!("[{}] size() -> {ret}", settings.tag);
+    //     }
+    //     return ret;
+    // }
 }

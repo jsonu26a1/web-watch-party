@@ -79,6 +79,16 @@ impl WriteHandle {
             file: BufWriter::new(file),
         }
     }
+
+    pub fn new_tmp() -> Self {
+        static mut TAG: i32 = 0;
+        unsafe {
+            let tag = TAG;
+            let h = Self::new(output_file_name(&format!("tmp{tag}")));
+            TAG += 1;
+            h
+        }
+    }
 }
 
 impl IoWriteHandler for WriteHandle {

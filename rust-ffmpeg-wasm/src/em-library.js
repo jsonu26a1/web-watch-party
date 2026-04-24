@@ -10,4 +10,9 @@ addToLibrary({
         return Module.current_file_handle.read_sync(buffer, offset);
     },
     get_current_file_size: () => BigInt(Module.current_file_handle.size()),
+    write_file_by_tag: (tag, offset, ptr, size) => {
+        // Module.write_handle.write_file_by_tag(tag, offset, ptr, size);
+        let buffer = new Uint8Array(HEAPU8.buffer, ptr, size);
+        (new Uint8Array(Module.output_buffers[tag], offset)).set(buffer);
+    },
 })

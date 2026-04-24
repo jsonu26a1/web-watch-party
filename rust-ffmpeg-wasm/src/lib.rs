@@ -1,7 +1,8 @@
 use rusty_ffmpeg::ffi;
 use std::ffi::CStr;
 
-mod probe;
+// mod probe;
+mod demo;
 mod platform;
 mod context;
 

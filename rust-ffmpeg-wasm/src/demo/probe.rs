@@ -3,22 +3,11 @@ use rusty_ffmpeg::ffi;
 use std::ptr::{ null, null_mut };
 use std::slice;
 
-use crate::platform::{ ReadHandle, WriteHandle };
+use crate::platform::{ ReadHandle };
 use crate::context::{ InputFormatContext };
+use crate::err_abort_return;
 
-macro_rules! err_abort_return {
-    ( $e:expr ) => {
-        {
-            let ret = unsafe { $e };
-            if ret < 0 {
-                println!("****** ERROR call to {}: {ret}, {}", stringify!($e), ffi::av_err2str(ret) );
-                return;
-            }
-        }
-    }
-}
-
-fn probe_dump_format() {
+pub fn dump_format() {
     let mut ifmt_ctx = InputFormatContext::new(ReadHandle::new()).unwrap();
     // avformat_open_input is now called in InputFormatContext::new
     // err_abort_return! { ffi::avformat_open_input(ifmt_ctx.as_mut(), null(), null(), null_mut()) };
@@ -31,10 +20,4 @@ fn probe_dump_format() {
         println!("*** stream #{}, duration: {}, (tb {:?}), nb_frames {}",
             stream.index, stream.duration, stream.time_base, stream.nb_frames);
     }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn probe_demo() {
-    println!("start");
-    probe_dump_format();
 }
