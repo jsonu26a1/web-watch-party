@@ -1,12 +1,166 @@
+use rusty_ffmpeg::ffi;
+
+use std::ffi::CStr;
+use std::ptr::{ null, null_mut };
+use std::slice;
+
+use crate::platform::{ ReadHandle, WriteHandle };
+use crate::context::{ InputFormatContext, OutputFormatContext, IoWriteHandler };
 
 
-struct RuntimeContext {
-    input: InputFormatContext,
-    /// I think we would be create these on demand, in `mux_next_[audio/video]`.
-    // o_audio: OutputFormatContext,
-    // o_video: OutputFormatContext,
-    /// what other data do we want to persist between those `extern "C"` calls?
+
+#[macro_export]
+macro_rules! panic_on_err {
+    ( $e:expr ) => {
+        {
+            let ret = unsafe { $e };
+            if ret < 0 {
+                panic!("****** ERROR call to `{}`: {ret}, {}", stringify!($e), ffi::av_err2str(ret) );
+            }
+        }
+    }
 }
+
+
+
+// extremely crude; ideally, we would report streams info back to JS runtime, let user confirm which to use
+// for audio/video. this just picks first one found for each.
+pub fn prepare_input(tag: i32) -> ActiveFile {
+    let mut ifmt_ctx = InputFormatContext::new(ReadHandle::new(tag)).unwrap();
+
+    panic_on_err! { ffi::avformat_find_stream_info(ifmt_ctx.as_ptr(), null_mut()) };
+
+    let ifmt_short_name = unsafe { CStr::from_ptr( (*(*ifmt_ctx.as_ptr()).iformat).name ) }.to_str().unwrap();
+    let ofmt_short_name = [c"webm", c"mp4"].iter().find(|&n| ifmt_short_name.contains(n.to_str().unwrap()))
+        .expect("input file should be either webm or mp4");
+    let ofmt = unsafe { ffi::av_guess_format(ofmt_short_name.as_ptr(), null(), null()) };
+    if ofmt.is_null() {
+        panic!("muxer {:?} not found", ofmt_short_name);
+    }
+
+    let ifmt_ctx_ref = unsafe { ifmt_ctx.as_ptr().as_ref().unwrap() };
+    let istreams = unsafe { slice::from_raw_parts(ifmt_ctx_ref.streams, ifmt_ctx_ref.nb_streams as usize) };
+
+    let mut audio_stream: Option<StreamInfo> = None;
+    let mut video_stream: Option<StreamInfo> = None;
+
+    for istream in istreams {
+        let istream = unsafe { istream.as_ref().unwrap() };
+        let codec_type = unsafe { (*istream.codecpar).codec_type };
+        if codec_type == ffi::AVMEDIA_TYPE_AUDIO && audio_stream.is_none() {
+            audio_stream = Some(StreamInfo {
+                codec_params: istream.codecpar,
+                input_index: istream.index,
+            });
+        } else if codec_type == ffi::AVMEDIA_TYPE_VIDEO && audio_stream.is_none() {
+            video_stream = Some(StreamInfo {
+                codec_params: istream.codecpar,
+                input_index: istream.index,
+            });
+        } else {
+            continue;
+        }
+    }
+
+    ActiveFile {
+        input: ifmt_ctx,
+        output_format: ofmt,
+        audio: audio_stream.unwrap(),
+        video: video_stream.unwrap(),
+    }
+}
+
+
+// for now, we will combine audio and video streams in the same fragment file; we do still plan
+// on experimenting with separate a/v fragments, and ways of handling the small/sparse audio packets
+// as described below. but let's just see if we can get this basic "dual" mode working for now.
+// TODO: do we want to return Result<T, Error> at some point?
+pub fn mux_next_dual(file: &mut ActiveFile, tag: i32, frag_size: u32) {
+    let ifmt_ctx = &mut file.input;
+    let mut ofmt_ctx = OutputFormatContext::new(WriteHandle::new(tag)).unwrap();
+    unsafe { (*ofmt_ctx.as_ptr()).oformat = file.output_format }
+
+    let audio_stream = unsafe { ffi::avformat_new_stream(ofmt_ctx.as_ptr(), null()) };
+    panic_on_err! { ffi::avcodec_parameters_copy((*audio_stream).codecpar, file.audio.codec_params) };
+    // line 129 in remux.c example; I'm not sure why this is necessary?
+    unsafe { (*(*audio_stream).codecpar).codec_tag = 0; }
+
+    let video_stream = unsafe { ffi::avformat_new_stream(ofmt_ctx.as_ptr(), null()) };
+    panic_on_err! { ffi::avcodec_parameters_copy((*video_stream).codecpar, file.video.codec_params) };
+    // line 129 in remux.c example; I'm not sure why this is necessary?
+    unsafe { (*(*video_stream).codecpar).codec_tag = 0; }
+
+    panic_on_err! { ffi::avformat_write_header(ofmt_ctx.as_ptr(), null_mut()) };
+
+    let ifmt_ctx_ref = unsafe { ifmt_ctx.as_ptr().as_ref().unwrap() };
+    let istreams = unsafe { slice::from_raw_parts(ifmt_ctx_ref.streams, ifmt_ctx_ref.nb_streams as usize) };
+
+    let mut pkt = unsafe { ffi::av_packet_alloc() };
+    if pkt.is_null() { panic!("Could not allocate AVPacket") }
+    loop {
+        let ret = unsafe { ffi::av_read_frame(ifmt_ctx.as_ptr(), pkt) };
+        if ret < 0 {
+            break;
+        }
+        let stream_index = unsafe { (*pkt).stream_index };
+        let istream = istreams[stream_index as usize];
+        let (ostream_index, ostream) =
+            if stream_index == file.audio.input_index {
+                (0, audio_stream)
+            } else if stream_index == file.video.input_index {
+                (1, video_stream)
+            } else {
+                unsafe { ffi::av_packet_unref(pkt) };
+                continue;
+            };
+        unsafe {
+            (*pkt).stream_index = ostream_index;
+            ffi::av_packet_rescale_ts(pkt, (*istream).time_base, (*ostream).time_base);
+            (*pkt).pos = -1;
+        }
+        panic_on_err! { ffi::av_interleaved_write_frame(ofmt_ctx.as_ptr(), pkt) };
+
+        // TODO: this is probably not good enough; we probably need to worry about video
+        // key frames? for now, do this, and see how it breaks. next we need to build the
+        // JS frontend for running this and attempting playback.
+        if ofmt_ctx.get_inner().size() > frag_size as u64 {
+            break;
+        }
+    }
+
+    panic_on_err! { ffi::av_write_trailer(ofmt_ctx.as_ptr()) };
+    unsafe { ffi::av_packet_free(&mut pkt) };
+}
+
+pub fn mux_next_audio(file: &mut ActiveFile, tag: i32) {
+    todo!();
+}
+
+pub fn mux_next_video(file: &mut ActiveFile, tag: i32) {
+    todo!();
+}
+
+
+
+struct ActiveFile {
+    input: InputFormatContext,
+    // ex. mp4, webm
+    output_format: *const ffi::AVOutputFormat,
+    // ex. AAC, opus
+    audio: StreamInfo,
+    // ex. h264, VP9
+    video: StreamInfo,
+}
+
+struct StreamInfo {
+    codec_params: *mut ffi::AVCodecParameters,
+    input_index: i32,
+}
+
+
+////////////////////////////////
+// previous notes:
+////////////////////////////////
 
 // alternatively, we could have file_open return *mut RuntimeContext, which is passed to mux_next and seek_to
 // this might be a better idea, to allow multiple files to be opened (for testing at least).
@@ -46,6 +200,9 @@ struct RuntimeContext {
 
 
 
+// these `extern "C" fn` should be in platform module, since they're specific to the WASM build
+
+/*
 // "file_id" is passed along to the JS runtime during calls to IoReadHandler::read and IoWriteHandler::write, so the
 // JS runtime can keep track of which file is being operated on.
 // "frag_size" sets the size limit of each fragment; when a fragment file exceeds this, a new fragment will be started
@@ -83,4 +240,4 @@ pub extern "C" fn seek_to_time(rt: *mut RuntimeContext, ts: i64) -> i64 {
 pub extern "C" fn seek_to_offset(rt: *mut RuntimeContext, pos: i64) -> i64 {
     todo!();
 }
-
+*/
