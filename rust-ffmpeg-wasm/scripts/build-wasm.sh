@@ -19,7 +19,7 @@ CONF_FLAGS=(
 #     -sEXPORTED_FUNCTIONS="_test_promise,_foo_add,_get_av_version,_try_av_malloc,_try_box_leak"
     # -sASYNCIFY_IMPORTS="read_current_file"
 
-    -sEXPORTED_FUNCTIONS="_get_av_version,_log_av_version,_probe_demo"
+    -sEXPORTED_FUNCTIONS="_run_demo"
 
     -sEXPORTED_RUNTIME_METHODS="ccall,wasmMemory,UTF8ToString"
 

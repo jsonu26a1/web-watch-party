@@ -5,6 +5,7 @@ use std::ffi::CStr;
 mod demo;
 mod platform;
 mod context;
+mod mux_frag;
 
 unsafe extern "C" {
     fn console_log_raw(ptr: *const u8, len: usize);

@@ -72,6 +72,8 @@ pub trait IoReadHandler: Sized {
     fn size(&self) -> u64;
 }
 
+
+
 struct ReadWrapper<T>(T);
 
 unsafe impl<T: IoReadHandler> IoHandler for ReadWrapper<T> {
@@ -79,7 +81,7 @@ unsafe impl<T: IoReadHandler> IoHandler for ReadWrapper<T> {
     fn read(&mut self, buf_ptr: *mut u8, buf_size: i32) -> i32 {
         T::read(&mut self.0, buf_ptr, buf_size)
     }
-    fn write(&mut self, buf_ptr: *const u8, buf_size: i32) -> i32 {
+    fn write(&mut self, _buf_ptr: *const u8, _buf_size: i32) -> i32 {
         unimplemented!();
     }
     fn seek(&mut self, offset: SeekFrom) -> i64 {
@@ -93,13 +95,14 @@ unsafe impl<T: IoReadHandler> IoHandler for ReadWrapper<T> {
 pub trait IoWriteHandler: Sized {
     fn write(&mut self, buf_ptr: *const u8, buf_size: i32) -> i32;
     fn seek(&mut self, offset: SeekFrom) -> i64;
+    fn size(&self) -> u64;
 }
 
 struct WriteWrapper<T>(T);
 
 unsafe impl<T: IoWriteHandler> IoHandler for WriteWrapper<T> {
     const READONLY: bool = false;
-    fn read(&mut self, buf_ptr: *mut u8, buf_size: i32) -> i32 {
+    fn read(&mut self, _buf_ptr: *mut u8, _buf_size: i32) -> i32 {
         unimplemented!();
     }
     fn write(&mut self, buf_ptr: *const u8, buf_size: i32) -> i32 {
@@ -112,6 +115,8 @@ unsafe impl<T: IoWriteHandler> IoHandler for WriteWrapper<T> {
         unimplemented!();
     }
 }
+
+
 
 struct IoContext<T> {
     avio_ctx: *mut ffi::AVIOContext,
@@ -175,6 +180,8 @@ impl<T> Drop for IoContext<T> {
     }
 }
 
+
+
 struct FormatContext<T> {
     fmt_ctx: *mut ffi::AVFormatContext,
     io_ctx: IoContext<T>,
@@ -199,6 +206,8 @@ impl<T> Drop for FormatContext<T> {
         
     }
 }
+
+
 
 pub struct InputFormatContext<T = ReadHandle>(FormatContext<ReadWrapper<T>>);
 
@@ -243,6 +252,8 @@ impl<T> Drop for InputFormatContext<T> {
     }
 }
 
+
+
 pub struct OutputFormatContext<T = WriteHandle>(FormatContext<WriteWrapper<T>>);
 
 impl<T: IoWriteHandler> OutputFormatContext<T> {
@@ -250,6 +261,10 @@ impl<T: IoWriteHandler> OutputFormatContext<T> {
         let io_ctx = IoContext::from_writer(handle)?;
         let fmt_ctx = FormatContext::new(io_ctx)?;
         Some(Self(fmt_ctx))
+    }
+
+    pub fn get_inner(&mut self) -> &mut T {
+        &mut unsafe { self.0.io_ctx.handler.as_mut() }.unwrap().0
     }
 
     pub fn as_ptr(&self) -> *mut ffi::AVFormatContext {
@@ -263,9 +278,11 @@ impl<T: IoWriteHandler> OutputFormatContext<T> {
 }
 
 
+
 use std::rc::Rc;
 use std::cell::RefCell;
 
+// TODO this is kinda messy, and maybe unfinished?
 pub struct LoggerSettings {
     pub tag: String,
     // pub log_fn: Option<fn(msg: String)>,
@@ -366,12 +383,12 @@ impl<T: IoWriteHandler> IoWriteHandler for WriteLogger<T> {
         }
         return ret;
     }
-    // fn size(&self) -> u64 {
-    //     let settings = self.settings.borrow_mut();
-    //     let ret = self.target.size();
-    //     if settings.size {
-    //         println!("[{}] size() -> {ret}", settings.tag);
-    //     }
-    //     return ret;
-    // }
+    fn size(&self) -> u64 {
+        let settings = self.settings.borrow_mut();
+        let ret = self.target.size();
+        if settings.size {
+            println!("[{}] size() -> {ret}", settings.tag);
+        }
+        return ret;
+    }
 }

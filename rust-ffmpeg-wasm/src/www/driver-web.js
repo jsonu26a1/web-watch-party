@@ -23,6 +23,6 @@ class FileHandle {
 }
 
 export default async function(file) {
-    let ffmpeg = await ffmpeg_module({ current_file_handle: new FileHandle(file) });
+    let ffmpeg = await ffmpeg_module({ input_files: [], output_files: [] });
     return ffmpeg;
 }

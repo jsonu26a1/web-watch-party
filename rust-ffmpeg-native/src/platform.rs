@@ -19,7 +19,8 @@ pub struct ReadHandle {
 }
 
 impl ReadHandle {
-    pub fn new() -> Self {
+    pub fn new(_tag: i32) -> Self {
+        // _tag is ignored since we only support one SAMPLE file right now
         let file_name = &*SAMPLE_MEDIA_PATH;
         let file = File::open(file_name).unwrap();
         let size = file.metadata().unwrap().len();
@@ -54,11 +55,15 @@ impl IoReadHandler for ReadHandle {
 
 pub struct WriteHandle {
     file: BufWriter<File>,
+    // there's not an easy to get the length of the file (without experimental APIs or File::metadata syscall)
+    // so we'll roughly track it, like we do in rust-ffmpeg-wasm platform module.
+    cursor: i64,
+    size: u64,
 }
 
-fn output_file_name(kind: &str) -> PathBuf {
+fn output_file_name(ps: &str) -> PathBuf {
     let base = Path::new(&*SAMPLE_MEDIA_PATH);
-    let file_name = format!( "{}_{kind}.{}",
+    let file_name = format!( "{}_{ps}.{}",
         base.file_stem().unwrap().display(),
         base.extension().unwrap().display() );
     base.parent().unwrap().join(file_name)
@@ -66,25 +71,30 @@ fn output_file_name(kind: &str) -> PathBuf {
 
 impl WriteHandle {
     pub fn for_audio() -> Self {
-        Self::new(output_file_name("audio"))
+        Self::new_path(output_file_name("audio"))
     }
 
     pub fn for_video() -> Self {
-        Self::new(output_file_name("video"))
+        Self::new_path(output_file_name("video"))
     }
 
-    pub fn new(path: impl AsRef<Path>) -> Self {
+    pub fn new(tag: i32) -> Self {
+        Self::new_path(output_file_name(&format!("tag_{tag}")))
+    }
+
+    pub fn new_path(path: impl AsRef<Path>) -> Self {
         let file = OpenOptions::new().create(true).write(true).truncate(true).open(path).unwrap();
         Self {
             file: BufWriter::new(file),
+            cursor: 0,
+            size: 0,
         }
     }
 
     pub fn new_tmp() -> Self {
         static mut TAG: i32 = 0;
         unsafe {
-            let tag = TAG;
-            let h = Self::new(output_file_name(&format!("tmp{tag}")));
+            let h = Self::new(TAG);
             TAG += 1;
             h
         }
@@ -93,6 +103,12 @@ impl WriteHandle {
 
 impl IoWriteHandler for WriteHandle {
     fn write(&mut self, buf_ptr: *const u8, buf_size: i32) -> i32 {
+        self.cursor += buf_size as i64;
+        let end = self.cursor as u64;
+        if self.cursor as u64 > self.size {
+            self.size = end;
+        }
+
         let buf = unsafe { slice::from_raw_parts(buf_ptr, buf_size as usize) };
         match self.file.write_all(buf) {
             Ok(_) => 0,
@@ -103,6 +119,12 @@ impl IoWriteHandler for WriteHandle {
         }
     }
     fn seek(&mut self, offset: SeekFrom) -> i64 {
+        match offset {
+            SeekFrom::Start(i) => self.cursor = i as i64,
+            SeekFrom::End(i) => self.cursor = self.size as i64 + i,
+            SeekFrom::Current(i) => self.cursor += i,
+        }
+        
         // TODO we could track the cursor position and use BufReader::seek_relative
         // since seek otherwise drops the internal buffer
         // match offset {
@@ -110,5 +132,8 @@ impl IoWriteHandler for WriteHandle {
         //     _ => ...
         // }
         self.file.seek(offset).unwrap() as i64
+    }
+    fn size(&self) -> u64 {
+        self.size
     }
 }

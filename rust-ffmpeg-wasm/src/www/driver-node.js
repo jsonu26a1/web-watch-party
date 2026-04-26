@@ -4,7 +4,7 @@ import ffmpeg_module from './output.mjs';
 let file_name = fs.readFileSync("./deps/sample-media-path.txt", { encoding: 'utf8' }).trim();
 
 class FileHandle {
-    constructor() {
+    constructor(file_name) {
         this.fd = fs.openSync(file_name);
         this.st_size = fs.fstatSync(this.fd).size;
         this.offset = 0;
@@ -25,6 +25,6 @@ class FileHandle {
     }
 }
 
-let ffmpeg = await ffmpeg_module({ current_file_handle: new FileHandle() });
+let ffmpeg = await ffmpeg_module({ input_files: [new FileHandle(file_name)], output_files: [] });
 
 export default ffmpeg;

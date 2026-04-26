@@ -25,7 +25,7 @@ pub fn remux_example() {
     // }
     // let mut video_ofmt_ctx = Tmp(audio_ofmt_ctx.as_ptr());
 
-    let mut ifmt_ctx = InputFormatContext::new(ReadHandle::new()).unwrap();
+    let mut ifmt_ctx = InputFormatContext::new(ReadHandle::new(0)).unwrap();
 
     err_abort_return! { ffi::avformat_find_stream_info(ifmt_ctx.as_ptr(), null_mut()) };
 

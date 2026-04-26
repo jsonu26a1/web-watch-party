@@ -11,7 +11,7 @@ use crate::context::{ InputFormatContext, OutputFormatContext, ReadLogger, Write
 use crate::err_abort_return;
 
 pub fn remux_audio_repeat() {
-    let logger = ReadLogger::new(ReadHandle::new(), "input", true, true, false);
+    let logger = ReadLogger::new(ReadHandle::new(0), "input", true, true, false);
     let rls = logger.settings.clone();
     let mut ifmt_ctx = InputFormatContext::new(logger).unwrap();
 

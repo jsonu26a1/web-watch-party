@@ -1,3 +1,3 @@
 import ffmpeg from './driver-node.js';
 
-ffmpeg._probe_demo();
+ffmpeg._run_demo();

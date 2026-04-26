@@ -5,25 +5,27 @@ use crate::context::{ IoReadHandler, IoWriteHandler };
 pub struct ReadHandle {
     cursor: i64,
     size: u64,
+    tag: i32,
 }
 
 impl ReadHandle {
-    pub fn new() -> Self {
+    pub fn new(tag: i32) -> Self {
         Self {
             cursor: 0,
-            size: unsafe { get_current_file_size() },
+            size: unsafe { file_size(tag) },
+            tag,
         }
     }
 }
 
 unsafe extern "C" {
-    fn read_current_file(ptr: *const u8, offset: i64, len: i32) -> i32;
-    fn get_current_file_size() -> u64;
+    fn file_read(tag: i32, ptr: *const u8, offset: i64, len: i32) -> i32;
+    fn file_size(tag: i32) -> u64;
 }
 
 impl IoReadHandler for ReadHandle {
     fn read(&mut self, buf_ptr: *mut u8, buf_size: i32) -> i32 {
-        let count = unsafe { read_current_file(buf_ptr, self.cursor, buf_size) };
+        let count = unsafe { file_read(self.tag, buf_ptr, self.cursor, buf_size) };
         self.cursor += count as i64;
         count
     }
@@ -74,12 +76,12 @@ impl WriteHandle {
 }
 
 unsafe extern "C" {
-    fn write_file_by_tag(tag: i32, offset: i64, ptr: *const u8, size: i32);
+    fn file_write(tag: i32, offset: i64, ptr: *const u8, size: i32);
 }
 
 impl IoWriteHandler for WriteHandle {
     fn write(&mut self, buf_ptr: *const u8, buf_size: i32) -> i32 {
-        unsafe { write_file_by_tag(self.tag, self.cursor, buf_ptr, buf_size) };
+        unsafe { file_write(self.tag, self.cursor, buf_ptr, buf_size) };
         self.cursor += buf_size as i64;
         let end = self.cursor as u64;
         if self.cursor as u64 > self.size {
@@ -94,5 +96,8 @@ impl IoWriteHandler for WriteHandle {
             SeekFrom::Current(i) => self.cursor += i,
         }
         self.cursor
+    }
+    fn size(&self) -> u64 {
+        self.size
     }
 }

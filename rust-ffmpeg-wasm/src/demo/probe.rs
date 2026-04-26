@@ -8,7 +8,7 @@ use crate::context::{ InputFormatContext };
 use crate::err_abort_return;
 
 pub fn dump_format() {
-    let mut ifmt_ctx = InputFormatContext::new(ReadHandle::new()).unwrap();
+    let mut ifmt_ctx = InputFormatContext::new(ReadHandle::new(0)).unwrap();
     // avformat_open_input is now called in InputFormatContext::new
     // err_abort_return! { ffi::avformat_open_input(ifmt_ctx.as_mut(), null(), null(), null_mut()) };
     err_abort_return! { ffi::avformat_find_stream_info(ifmt_ctx.as_ptr(), null_mut()) };

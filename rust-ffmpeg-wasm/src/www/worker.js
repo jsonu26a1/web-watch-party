@@ -9,6 +9,6 @@ onmessage = async (e) => {
         console.log("ffmpeg runtime already initialized");
     };
     ffmpeg = await init_ffmpeg(e.data);
-    ffmpeg._probe_demo();
-    e.source.postMessage("finished probe_demo()");
+    ffmpeg._run_demo();
+    e.source.postMessage("finished run_demo()");
 };
