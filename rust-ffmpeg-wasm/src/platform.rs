@@ -1,6 +1,14 @@
+use rusty_ffmpeg::ffi;
+
 use std::io::SeekFrom;
 
 use crate::context::{ IoReadHandler, IoWriteHandler };
+
+unsafe extern "C" {
+    fn file_read(tag: i32, offset: i64, ptr: *const u8, size: i32) -> i32;
+    fn file_size(tag: i32) -> u64;
+    fn file_write(tag: i32, offset: i64, ptr: *const u8, size: i32) -> i32;
+}
 
 pub struct ReadHandle {
     cursor: i64,
@@ -18,14 +26,9 @@ impl ReadHandle {
     }
 }
 
-unsafe extern "C" {
-    fn file_read(tag: i32, ptr: *const u8, offset: i64, len: i32) -> i32;
-    fn file_size(tag: i32) -> u64;
-}
-
 impl IoReadHandler for ReadHandle {
     fn read(&mut self, buf_ptr: *mut u8, buf_size: i32) -> i32 {
-        let count = unsafe { file_read(self.tag, buf_ptr, self.cursor, buf_size) };
+        let count = unsafe { file_read(self.tag, self.cursor, buf_ptr, buf_size) };
         self.cursor += count as i64;
         count
     }
@@ -74,14 +77,12 @@ impl WriteHandle {
         }
     }
 }
-
-unsafe extern "C" {
-    fn file_write(tag: i32, offset: i64, ptr: *const u8, size: i32);
-}
-
 impl IoWriteHandler for WriteHandle {
     fn write(&mut self, buf_ptr: *const u8, buf_size: i32) -> i32 {
-        unsafe { file_write(self.tag, self.cursor, buf_ptr, buf_size) };
+        let ret = unsafe { file_write(self.tag, self.cursor, buf_ptr, buf_size) };
+        if ret != 0 {
+            return ffi::AVERROR_EXTERNAL;
+        }
         self.cursor += buf_size as i64;
         let end = self.cursor as u64;
         if self.cursor as u64 > self.size {
