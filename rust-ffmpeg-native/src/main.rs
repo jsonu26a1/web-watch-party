@@ -11,6 +11,8 @@ use crate::context::{ InputFormatContext, OutputFormatContext };
 mod demo;
 #[path = "../../rust-ffmpeg-wasm/src/context.rs"]
 mod context;
+#[path = "../../rust-ffmpeg-wasm/src/mux_frag.rs"]
+mod mux_frag;
 mod platform;
 
 
@@ -20,5 +22,17 @@ fn main() {
     println!("{}", cs.to_str().unwrap());
     // demo::probe::dump_format();
     // demo::remux::remux_example();
-    demo::seek::remux_audio_repeat();
+    // demo::seek::remux_audio_repeat();
+    demo_mux_frag();
+}
+
+use mux_frag::{ prepare_input, mux_next_dual };
+
+fn demo_mux_frag() {
+    let frag_size = 1024*1024*4;
+    let mut active_file = prepare_input(0);
+    mux_next_dual(&mut active_file, 0, frag_size);
+    mux_next_dual(&mut active_file, 1, frag_size);
+    mux_next_dual(&mut active_file, 2, frag_size);
+    // hmm, how do we know when the end of file has been reached?
 }

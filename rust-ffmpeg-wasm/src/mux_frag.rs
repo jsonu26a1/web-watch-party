@@ -3,6 +3,7 @@ use rusty_ffmpeg::ffi;
 use std::ffi::CStr;
 use std::ptr::{ null, null_mut };
 use std::slice;
+use std::collections::VecDeque;
 
 use crate::platform::{ ReadHandle, WriteHandle };
 use crate::context::{ InputFormatContext, OutputFormatContext, IoWriteHandler };
@@ -47,16 +48,14 @@ pub fn prepare_input(tag: i32) -> ActiveFile {
     for istream in istreams {
         let istream = unsafe { istream.as_ref().unwrap() };
         let codec_type = unsafe { (*istream.codecpar).codec_type };
+        let info = Some(StreamInfo {
+            codec_params: istream.codecpar,
+            input_index: istream.index,
+        });
         if codec_type == ffi::AVMEDIA_TYPE_AUDIO && audio_stream.is_none() {
-            audio_stream = Some(StreamInfo {
-                codec_params: istream.codecpar,
-                input_index: istream.index,
-            });
+            audio_stream = info;
         } else if codec_type == ffi::AVMEDIA_TYPE_VIDEO && audio_stream.is_none() {
-            video_stream = Some(StreamInfo {
-                codec_params: istream.codecpar,
-                input_index: istream.index,
-            });
+            video_stream = info;
         } else {
             continue;
         }
@@ -67,15 +66,95 @@ pub fn prepare_input(tag: i32) -> ActiveFile {
         output_format: ofmt,
         audio: audio_stream.unwrap(),
         video: video_stream.unwrap(),
+        buffered_frames: VecDeque::new(),
     }
 }
 
 
+// new version where we try and correct some issues with v1
+pub fn mux_next_dual(file: &mut ActiveFile, tag: i32, frag_size: u32) {
+    let ifmt_ctx = &mut file.input;
+    let mut ofmt_ctx = OutputFormatContext::new(WriteHandle::new(tag)).unwrap();
+    unsafe { (*ofmt_ctx.as_ptr()).oformat = file.output_format }
+
+    let audio_stream = unsafe { ffi::avformat_new_stream(ofmt_ctx.as_ptr(), null()) };
+    panic_on_err! { ffi::avcodec_parameters_copy((*audio_stream).codecpar, file.audio.codec_params) };
+    // line 129 in remux.c example; I'm not sure why this is necessary?
+    unsafe { (*(*audio_stream).codecpar).codec_tag = 0; }
+
+    let video_stream = unsafe { ffi::avformat_new_stream(ofmt_ctx.as_ptr(), null()) };
+    panic_on_err! { ffi::avcodec_parameters_copy((*video_stream).codecpar, file.video.codec_params) };
+    // line 129 in remux.c example; I'm not sure why this is necessary?
+    unsafe { (*(*video_stream).codecpar).codec_tag = 0; }
+
+    panic_on_err! { ffi::avformat_write_header(ofmt_ctx.as_ptr(), null_mut()) };
+
+    let ifmt_ctx_ref = unsafe { ifmt_ctx.as_ptr().as_ref().unwrap() };
+    let istreams = unsafe { slice::from_raw_parts(ifmt_ctx_ref.streams, ifmt_ctx_ref.nb_streams as usize) };
+
+    let mut start_ts = None;
+
+    let mut pkt = unsafe { ffi::av_packet_alloc() };
+    if pkt.is_null() { panic!("Could not allocate AVPacket") }
+
+    loop {
+        if let Some(buf) = file.buffered_frames.pop_front() {
+            pkt = buf;
+        } else {
+            let ret = unsafe { ffi::av_read_frame(ifmt_ctx.as_ptr(), pkt) };
+            if ret < 0 {
+                break;
+            }
+        }
+
+        if ofmt_ctx.get_inner().size() > frag_size as u64
+            && unsafe { (*pkt).flags } & ffi::AV_PKT_FLAG_KEY as i32 > 0
+        {
+            file.buffered_frames.push_back(pkt);
+            pkt = null_mut();
+            break;
+        }
+
+        let stream_index = unsafe { (*pkt).stream_index };
+        let istream = istreams[stream_index as usize];
+        let (ostream_index, ostream) =
+            if stream_index == file.audio.input_index {
+                (0, audio_stream)
+            } else if stream_index == file.video.input_index {
+                (1, video_stream)
+            } else {
+                unsafe { ffi::av_packet_unref(pkt) };
+                continue;
+            };
+        unsafe {
+            (*pkt).stream_index = ostream_index;
+            ffi::av_packet_rescale_ts(pkt, (*istream).time_base, (*ostream).time_base);
+            (*pkt).pos = -1;
+            if let Some(start_ts) = start_ts {
+                (*pkt).pts -= start_ts;
+                (*pkt).dts -= start_ts;
+            } else {
+                let _start_ts = (*pkt).pts;
+                start_ts = Some(_start_ts);
+                (*pkt).pts -= _start_ts;
+                (*pkt).dts -= _start_ts;
+            }
+        }
+
+        panic_on_err! { ffi::av_interleaved_write_frame(ofmt_ctx.as_ptr(), pkt) };
+    }
+
+    panic_on_err! { ffi::av_write_trailer(ofmt_ctx.as_ptr()) };
+    unsafe { ffi::av_packet_free(&mut pkt) };
+}
+
+
+/*
 // for now, we will combine audio and video streams in the same fragment file; we do still plan
 // on experimenting with separate a/v fragments, and ways of handling the small/sparse audio packets
 // as described below. but let's just see if we can get this basic "dual" mode working for now.
 // TODO: do we want to return Result<T, Error> at some point?
-pub fn mux_next_dual(file: &mut ActiveFile, tag: i32, frag_size: u32) {
+pub fn mux_next_dual_v1(file: &mut ActiveFile, tag: i32, frag_size: u32) {
     let ifmt_ctx = &mut file.input;
     let mut ofmt_ctx = OutputFormatContext::new(WriteHandle::new(tag)).unwrap();
     unsafe { (*ofmt_ctx.as_ptr()).oformat = file.output_format }
@@ -131,6 +210,7 @@ pub fn mux_next_dual(file: &mut ActiveFile, tag: i32, frag_size: u32) {
     panic_on_err! { ffi::av_write_trailer(ofmt_ctx.as_ptr()) };
     unsafe { ffi::av_packet_free(&mut pkt) };
 }
+*/
 
 pub fn mux_next_audio(file: &mut ActiveFile, tag: i32) {
     todo!();
@@ -142,7 +222,7 @@ pub fn mux_next_video(file: &mut ActiveFile, tag: i32) {
 
 
 
-struct ActiveFile {
+pub struct ActiveFile {
     input: InputFormatContext,
     // ex. mp4, webm
     output_format: *const ffi::AVOutputFormat,
@@ -150,6 +230,7 @@ struct ActiveFile {
     audio: StreamInfo,
     // ex. h264, VP9
     video: StreamInfo,
+    buffered_frames: VecDeque<*mut ffi::AVPacket>,
 }
 
 struct StreamInfo {

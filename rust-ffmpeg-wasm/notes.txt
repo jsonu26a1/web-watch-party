@@ -1,0 +1,32 @@
+2026-05-29
+==========
+
+I tested the mux_frag module in the rust-ffmpeg-native crate, and as expected, it had a lot of issues. surprisingly, it didn't panic! and, the 3 output files generated from a sample webm input file were playable; however, running ffprobe on them reveals some issues; the first output file (tag 0) has no issues, but the second and third files have incorrect duration metadata, and there's also many errors reported; here's a few:
+
+[libdav1d @ 00000225cfd5d980]
+  Missing reference frame needed for show_existing_frame (frame_to_show_map_idx = 1).
+  Failed to read unit 0 (type 3).
+  Failed to parse temporal unit.
+  zero_bit out of range: 1, but must be in [0,0].
+  Invalid repeated frame header OBU.
+
+I can explain the duration metadata issue; the duration for the second and third files is the end duration of that fragment within the input file; say the first file spans from 0:00 to 0:30, the second 0:31 to 1:00, and the third 1:01 to 1:30; a media player would expect the duration of each fragment to be about 0:30, but instead, the second and third have durations 1:00 and 1:30, even though they only contain 0:30 of playback. there should be a way to reset this so that it works out correctly, but I'll have to do some research on this. the most important thing is that when we concatenate them using the MediaSource Web API in the browser, that they can be played back without stutters/skips/glitches. it's possible feeding these files into the API as they are now will work, but I haven't created a setup to test this in the browser yet.
+
+the errors reported by ffprobe are probably related to how we're muxing packets; we simply abort when the max file size has been exceeded. it's possible that these errors will be fixed if we correctly stop and start muxing on a keyframe boundary, but I'm not really sure. I guess I could try searching the ffmpeg code base for those error messages, to try and understand what's going on.
+
+
+--------
+
+
+so I tried... just subtracting the pts (presentation timestamp), and it appears to work? when muxing a new frag, I save the first frame's pts, and subtract that value from the pts and dts (decompression timestamp) of each subsequent frame, and the duration metadata appears to be fixed. I honestly didn't think it would work, but I'll probably learn later that this is not the correct way to do this.
+
+hmmm... see docs for av_read_frame() (at https://ffmpeg.org/doxygen/7.1/group__lavf__decoding.html#ga4fdb3084415a82e3810de6ee60e46a61 ):
+  pkt->pts can be AV_NOPTS_VALUE if the video format has B-frames, so it is better to rely on pkt->dts if you do not decompress the payload.
+
+but if we ensure that a fragment always starts with a keyframe, this shouldn't matter, right?
+
+
+---------
+
+
+I tried writing packets until the file exceeds frag_size and a key frame is encountered, but I'm still seeing errors from ffprobe ("Missing reference frame needed for show_existing_frame (frame_to_show_map_idx = 1)."). I'll have to keep digging into this; I could look up these errors in the code base, and I also might start looking at how ffmpeg CLI handles muxing videos... I recall in previous tests, using the "copy" codec and having it seek to sometime, then start muxing an output file. if I can figure out what ffmpeg is doing to accomplish that, I could adapt that for my mux_next_dual function.
