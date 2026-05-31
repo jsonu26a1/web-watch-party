@@ -12,6 +12,7 @@ let output_file = {
   written: 0,
 };
 
+ffmpeg.input_files = [new FileHandle(sample_files[0])];
 ffmpeg.output_files = [output_file];
 
 let active_file = null;
@@ -62,14 +63,12 @@ function handle_request(req, res) {
     } else if(api_fn == "file_open") {
       if(active_file)
         ffmpeg._file_close(active_file);
-      ffmpeg.input_files = [new FileHandle(sample_files[0])];
       active_file = ffmpeg._file_open(0);
       console.log("active_file:", active_file);
       return res.end("file opened");
     } else if(api_fn == "file_close") {
       if(active_file) {
         ffmpeg._file_close(active_file);
-        ffmpeg.input_files.pop().close();
         return res.end("file closed");
       } else {
         return res.end("no file to close");
