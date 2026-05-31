@@ -238,6 +238,28 @@ struct StreamInfo {
     input_index: i32,
 }
 
+pub mod external {
+    use super::{ ActiveFile, prepare_input };
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn file_open(tag: i32) -> *mut ActiveFile {
+        let file = Box::new(prepare_input(tag));
+        Box::into_raw(file)
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn file_close(ptr: *mut ActiveFile) {
+        unsafe { let _ = Box::from_raw(ptr); }
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn mux_next_dual(ptr: *mut ActiveFile, tag: i32, frag_size: u32) {
+        let file = unsafe { &mut (*ptr) };
+        super::mux_next_dual(file, tag, frag_size);
+    }
+}
+
+
 
 ////////////////////////////////
 // previous notes:
