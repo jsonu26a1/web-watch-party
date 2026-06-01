@@ -28,4 +28,7 @@ addToLibrary({
         output_file.written += size;
         return 0;
     },
+    send_string: (ptr, len) => {
+        Module.received_string = new TextDecoder().decode(new Uint8Array(HEAPU8.buffer, ptr, len))
+    },
 })

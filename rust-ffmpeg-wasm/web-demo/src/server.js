@@ -15,7 +15,7 @@ let output_file = {
 ffmpeg.input_files = [new FileHandle(sample_files[0])];
 ffmpeg.output_files = [output_file];
 
-let active_file = null;
+let active_file = ffmpeg._file_open(0);
 
 const port = 8004;
 const server = http.createServer((req, res) => {
@@ -58,8 +58,10 @@ function handle_request(req, res) {
         return res.end("error: no active file");
       output_file.written = 0;
       ffmpeg._mux_next_dual(active_file, 0, frag_size);
-      console.log("ffmpeg._mux_next_dual():", output_file.written)
-      return res.end(new Uint8Array(output_buffer, output_file.written));
+      console.log("ffmpeg._mux_next_dual():", output_file.written);
+      res.setHeader('Content-Type', "application/octet-stream");
+      res.write(new Uint8Array(output_buffer, output_file.written));
+      return res.end();
     } else if(api_fn == "file_open") {
       if(active_file)
         ffmpeg._file_close(active_file);
@@ -73,6 +75,13 @@ function handle_request(req, res) {
       } else {
         return res.end("no file to close");
       }
+    } else if(api_fn == "media_info") {
+      if(!active_file)
+        return res.end("error: no active file");
+      ffmpeg._media_info(active_file);
+      return res.end(ffmpeg.received_string);
+    } else if(api_fn == "test_file") {
+      return res.end(fs.readFileSync(sample_files[0]));
     }
   }
   res.writeHead(404);

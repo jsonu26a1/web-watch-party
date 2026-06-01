@@ -54,7 +54,7 @@ pub fn prepare_input(tag: i32) -> ActiveFile {
         });
         if codec_type == ffi::AVMEDIA_TYPE_AUDIO && audio_stream.is_none() {
             audio_stream = info;
-        } else if codec_type == ffi::AVMEDIA_TYPE_VIDEO && audio_stream.is_none() {
+        } else if codec_type == ffi::AVMEDIA_TYPE_VIDEO && video_stream.is_none() {
             video_stream = info;
         } else {
             continue;
@@ -70,6 +70,41 @@ pub fn prepare_input(tag: i32) -> ActiveFile {
     }
 }
 
+// fn get_codec_name<'a>(params: *mut ffi::AVCodecParameters) &'a str {
+//     let name = unsafe { CStr::from_ptr((*ffi::avcodec_descriptor_get((*params).codec_id)).name) }.to_str().unwrap();
+
+// }
+
+pub fn media_info(file: &mut ActiveFile) -> String {
+    let ifmt_ctx = &mut file.input;
+    let mut info = String::new();
+
+    info.push_str("format:");
+    let format = unsafe { CStr::from_ptr( (*(*ifmt_ctx.as_ptr()).iformat).name ) }.to_str().unwrap();
+    info.push_str(format);
+    info.push_str("\n");
+
+    // TODO!
+    // see https://developer.mozilla.org/en-US/docs/Web/Media/Guides/Formats/codecs_parameter
+    // and https://developer.mozilla.org/en-US/docs/Web/Media/Guides/Formats/Video_codecs
+    // we should do a better job of serving these names; right now, we serve (for example):
+    // "video:h264", "audio:aac"
+    // but in the "Formats/codecs_parameter" link, we need something like:
+    // "video:avc1", "audio:mp4a"
+    // we need to look at the source code of ffprobe, which does include these special codec name tags.
+    // using AVCodecDescriptor::name is wrong here.
+    info.push_str("audio:");
+    let audio = unsafe { CStr::from_ptr((*ffi::avcodec_descriptor_get((*file.audio.codec_params).codec_id)).name) }.to_str().unwrap();
+    info.push_str(audio);
+    info.push_str("\n");
+
+    info.push_str("video:");
+    let video = unsafe { CStr::from_ptr((*ffi::avcodec_descriptor_get((*file.video.codec_params).codec_id)).name) }.to_str().unwrap();
+    info.push_str(video);
+    info.push_str("\n");
+
+    info
+}
 
 // new version where we try and correct some issues with v1
 pub fn mux_next_dual(file: &mut ActiveFile, tag: i32, frag_size: u32) {
@@ -147,7 +182,6 @@ pub fn mux_next_dual(file: &mut ActiveFile, tag: i32, frag_size: u32) {
     panic_on_err! { ffi::av_write_trailer(ofmt_ctx.as_ptr()) };
     unsafe { ffi::av_packet_free(&mut pkt) };
 }
-
 
 /*
 // for now, we will combine audio and video streams in the same fragment file; we do still plan
@@ -256,6 +290,17 @@ pub mod external {
     pub extern "C" fn mux_next_dual(ptr: *mut ActiveFile, tag: i32, frag_size: u32) {
         let file = unsafe { &mut (*ptr) };
         super::mux_next_dual(file, tag, frag_size);
+    }
+
+    unsafe extern "C" {
+        fn send_string(ptr: *const u8, len: u32);
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn media_info(ptr: *mut ActiveFile) {
+        let file = unsafe { &mut (*ptr) };
+        let info = super::media_info(file);
+        unsafe { send_string(&info.as_bytes()[0], info.len() as u32); }
     }
 }
 
