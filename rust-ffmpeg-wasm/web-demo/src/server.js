@@ -12,10 +12,19 @@ let output_file = {
   written: 0,
 };
 
-ffmpeg.input_files = [new FileHandle(sample_files[0])];
+ffmpeg.input_files = [];
 ffmpeg.output_files = [output_file];
 
-let active_file = ffmpeg._file_open(0);
+let active_file = -1;
+let active_file_name = "";
+
+function internal_open_file(index) {
+  active_file_name = sample_files[index];
+  ffmpeg.input_files = [new FileHandle(active_file_name)];
+  active_file = ffmpeg._file_open(0);
+}
+
+internal_open_file(0);
 
 const port = 8004;
 const server = http.createServer((req, res) => {
@@ -60,12 +69,12 @@ function handle_request(req, res) {
       ffmpeg._mux_next_dual(active_file, 0, frag_size);
       console.log("ffmpeg._mux_next_dual():", output_file.written);
       res.setHeader('Content-Type', "application/octet-stream");
-      res.write(new Uint8Array(output_buffer, output_file.written));
+      res.write(new Uint8Array(output_buffer, 0, output_file.written));
       return res.end();
     } else if(api_fn == "file_open") {
       if(active_file)
         ffmpeg._file_close(active_file);
-      active_file = ffmpeg._file_open(0);
+      internal_open_file(Number(url.searchParams.get("sample")));
       console.log("active_file:", active_file);
       return res.end("file opened");
     } else if(api_fn == "file_close") {
@@ -79,9 +88,11 @@ function handle_request(req, res) {
       if(!active_file)
         return res.end("error: no active file");
       ffmpeg._media_info(active_file);
-      return res.end(ffmpeg.received_string);
+      let info = JSON.parse(ffmpeg.received_string);
+      info.file_name = path.basename(active_file_name);
+      return res.end(JSON.stringify(info));
     } else if(api_fn == "test_file") {
-      return res.end(fs.readFileSync(sample_files[0]));
+      return res.end(fs.readFileSync(active_file_name));
     }
   }
   res.writeHead(404);

@@ -1,4 +1,5 @@
 let video = document.querySelector("video");
+let output = document.querySelector("#output");
 
 function dbg_log(...args) {
     console.log("[DBG]", ...args);
@@ -40,6 +41,7 @@ class MediaSourceHandler {
     await async_event(this.mediaSource, "sourceopen");
   }
   set_mime_codec(mimeCodec) {
+    console.log(`MediaSource.isTypeSupported("${mimeCodec}")?`, MediaSource.isTypeSupported(mimeCodec));
     this.sourceBuffer = this.mediaSource.addSourceBuffer(mimeCodec);
   }
   async append_buffer(buffer) {
@@ -53,24 +55,25 @@ class MediaSourceHandler {
 
 let msh = new MediaSourceHandler();
 
+// this might also work in firefox?
+async function get_mime_codec_v2() {
+  let info = JSON.parse(await (await fetch("/api/media_info")).text());
+  return `video/${info.format}`;
+}
+
 // TODO this is completely broken. I think the solution is to fix mux_frag.rs:media_info in the wasm
 async function get_mime_codec() {
-  let res = await fetch("/api/media_info");
-  let text = await res.text();
-  let info = {};
-  for(let item of text.split("\n")) {
-    let fields = item.split(":");
-    if(fields[0])
-      info[fields[0]] = fields[1];
-  }
-  if(info.format.indexOf("webm") > 0) {
-    info.format = "webm";
-  }
-  if(info.format.indexOf("mp4") > 0) {
-    info.format = "mp4";
-  }
+  let info = await (await fetch("/api/media_info")).json();
   // this only works in firefox, chrome is more strict about codec strings
-  return `video/${info.format}; codecs="${info.video}, ${info.audio}"`;
+  let audio, video;
+  if(info.format == "mp4") {
+    audio = info.audio.tag;
+    video = info.video.tag;
+  } else if(info.format == "webm") {
+    audio = info.audio.name;
+    video = info.video.name;
+  }
+  return `video/${info.format}; codecs="${video}, ${audio}"`;
 }
 
 async function load_video() {
@@ -86,4 +89,34 @@ async function load_video() {
   console.log(buffer)
   await msh.append_buffer(buffer);
   msh.end_stream();
+}
+
+async function load_video2() {
+  await fetch("/api/file_open");
+  await msh.attach_video_player(video);
+  let mime_codec = await get_mime_codec();
+  dbg_log(mime_codec);
+  msh.set_mime_codec(mime_codec);
+  // let res = await fetch("/api/mux_next_dual");
+  let res = await fetch("/api/test_file");
+  let buffer = await res.arrayBuffer();
+  dbg_record("buffer", buffer);
+  console.log(buffer)
+  await msh.append_buffer(buffer);
+  msh.end_stream();
+}
+
+// save the fragment/file to test externally with video player and ffprobe
+async function dl_video() {
+  await fetch("/api/file_open");
+  let info = JSON.parse(await (await fetch("/api/media_info")).text());
+  let api_url = "/api/mux_next_dual";
+  // let api_url = "/api/test_file";
+  let buffer = await (await fetch(api_url)).arrayBuffer();
+  let blob = new Blob([buffer], {type: `video/${info.format}`});
+  let link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `sample_${info.file_name}`;
+  link.innerText = "download sample";
+  output.replaceChildren(link);
 }

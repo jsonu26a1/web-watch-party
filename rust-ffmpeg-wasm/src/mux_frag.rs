@@ -4,6 +4,7 @@ use std::ffi::CStr;
 use std::ptr::{ null, null_mut };
 use std::slice;
 use std::collections::VecDeque;
+use std::fmt::Write;
 
 use crate::platform::{ ReadHandle, WriteHandle };
 use crate::context::{ InputFormatContext, OutputFormatContext, IoWriteHandler };
@@ -70,42 +71,35 @@ pub fn prepare_input(tag: i32) -> ActiveFile {
     }
 }
 
-// fn get_codec_name<'a>(params: *mut ffi::AVCodecParameters) &'a str {
-//     let name = unsafe { CStr::from_ptr((*ffi::avcodec_descriptor_get((*params).codec_id)).name) }.to_str().unwrap();
-
-// }
-
 pub fn media_info(file: &mut ActiveFile) -> String {
     let ifmt_ctx = &mut file.input;
     let mut info = String::new();
+    let mut format = unsafe { CStr::from_ptr( (*(*ifmt_ctx.as_ptr()).iformat).name ) }.to_str().unwrap();
+    if format.contains("webm") {
+        format = "webm";
+    } else if format.contains("mp4") {
+        format = "mp4";
+    }
 
-    info.push_str("format:");
-    let format = unsafe { CStr::from_ptr( (*(*ifmt_ctx.as_ptr()).iformat).name ) }.to_str().unwrap();
-    info.push_str(format);
-    info.push_str("\n");
+    let audio_name = unsafe { CStr::from_ptr((*ffi::avcodec_descriptor_get((*file.audio.codec_params).codec_id)).name) }.to_str().unwrap();
+    let mut audio_tag_buf = [0i8; ffi::AV_FOURCC_MAX_STRING_SIZE as usize];
+    unsafe { ffi::av_fourcc_make_string(audio_tag_buf.as_mut_ptr(), (*file.audio.codec_params).codec_tag) };
+    let audio_tag = unsafe { CStr::from_ptr(audio_tag_buf.as_ptr()).to_str().unwrap() };
 
-    // TODO!
-    // see https://developer.mozilla.org/en-US/docs/Web/Media/Guides/Formats/codecs_parameter
-    // and https://developer.mozilla.org/en-US/docs/Web/Media/Guides/Formats/Video_codecs
-    // we should do a better job of serving these names; right now, we serve (for example):
-    // "video:h264", "audio:aac"
-    // but in the "Formats/codecs_parameter" link, we need something like:
-    // "video:avc1", "audio:mp4a"
-    // we need to look at the source code of ffprobe, which does include these special codec name tags.
-    // using AVCodecDescriptor::name is wrong here.
-    info.push_str("audio:");
-    let audio = unsafe { CStr::from_ptr((*ffi::avcodec_descriptor_get((*file.audio.codec_params).codec_id)).name) }.to_str().unwrap();
-    info.push_str(audio);
-    info.push_str("\n");
+    let video_name = unsafe { CStr::from_ptr((*ffi::avcodec_descriptor_get((*file.video.codec_params).codec_id)).name) }.to_str().unwrap();
+    let mut video_tag_buf = [0i8; ffi::AV_FOURCC_MAX_STRING_SIZE as usize];
+    unsafe { ffi::av_fourcc_make_string(video_tag_buf.as_mut_ptr(), (*file.video.codec_params).codec_tag) };
+    let video_tag = unsafe { CStr::from_ptr(video_tag_buf.as_ptr()).to_str().unwrap() };
 
-    info.push_str("video:");
-    let video = unsafe { CStr::from_ptr((*ffi::avcodec_descriptor_get((*file.video.codec_params).codec_id)).name) }.to_str().unwrap();
-    info.push_str(video);
-    info.push_str("\n");
-
+    // we don't need a dependency to serialize JSON, this is good enough
+    write!(&mut info, "{{\"format\":\"{format}\", \
+        \"audio\":{{\"name\":\"{audio_name}\", \"tag\":\"{audio_tag}\"}},\
+        \"video\":{{\"name\":\"{video_name}\", \"tag\":\"{video_tag}\"}}\
+    }}");
     info
 }
 
+/*
 // new version where we try and correct some issues with v1
 pub fn mux_next_dual(file: &mut ActiveFile, tag: i32, frag_size: u32) {
     let ifmt_ctx = &mut file.input;
@@ -182,13 +176,15 @@ pub fn mux_next_dual(file: &mut ActiveFile, tag: i32, frag_size: u32) {
     panic_on_err! { ffi::av_write_trailer(ofmt_ctx.as_ptr()) };
     unsafe { ffi::av_packet_free(&mut pkt) };
 }
+*/
 
-/*
+// /*
+// (v1)
 // for now, we will combine audio and video streams in the same fragment file; we do still plan
 // on experimenting with separate a/v fragments, and ways of handling the small/sparse audio packets
 // as described below. but let's just see if we can get this basic "dual" mode working for now.
 // TODO: do we want to return Result<T, Error> at some point?
-pub fn mux_next_dual_v1(file: &mut ActiveFile, tag: i32, frag_size: u32) {
+pub fn mux_next_dual(file: &mut ActiveFile, tag: i32, frag_size: u32) {
     let ifmt_ctx = &mut file.input;
     let mut ofmt_ctx = OutputFormatContext::new(WriteHandle::new(tag)).unwrap();
     unsafe { (*ofmt_ctx.as_ptr()).oformat = file.output_format }
@@ -244,7 +240,7 @@ pub fn mux_next_dual_v1(file: &mut ActiveFile, tag: i32, frag_size: u32) {
     panic_on_err! { ffi::av_write_trailer(ofmt_ctx.as_ptr()) };
     unsafe { ffi::av_packet_free(&mut pkt) };
 }
-*/
+// */
 
 pub fn mux_next_audio(file: &mut ActiveFile, tag: i32) {
     todo!();
